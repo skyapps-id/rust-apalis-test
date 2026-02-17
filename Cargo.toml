@@ -1,0 +1,27 @@
+[package]
+name = "rust-apalis-test"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "rust_apalis_test"
+path = "src/lib.rs"
+
+[[bin]]
+name = "producer"
+path = "bins/producer/main.rs"
+
+[[bin]]
+name = "worker"
+path = "bins/worker/main.rs"
+
+[dependencies]
+apalis = { version = "1.0.0-rc.4", features = ["retry"] }
+apalis-redis = { version = "1.0.0-rc.3" }
+apalis-core = { version = "1.0.0-rc.4" }
+apalis-workflow = { version = "0.1.0-rc.4" }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+chrono = "0.4"
+redis = { version = "0.32", features = ["tokio-comp", "connection-manager"] }
+tower = { version = "0.5" }
