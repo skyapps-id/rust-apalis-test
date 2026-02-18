@@ -1,5 +1,5 @@
 use redis::{Client, aio::ConnectionManager};
-use rust_apalis_test::server::worker::register::{run_jobs, run_jobs_with_config, WorkerConfig};
+use rust_apalis_test::server::worker::register::{run_jobs_with_config, WorkerConfig};
 use rust_apalis_test::storage::redis::StorageFactory;
 use rust_apalis_test::AppContainer;
 use std::sync::Arc;

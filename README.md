@@ -6,9 +6,11 @@ A production-ready example project using **Apalis 1.0.0-rc.4** for background jo
 
 - ✅ **Trait-based Usecase Pattern** - Clean separation of business logic
 - ✅ **REST API** - Create/schedule jobs via HTTP endpoints (Axum)
-- ✅ **Worker Processing** - Async job consumers with retry policy
+- ✅ **Worker Processing** - Configurable concurrency, async job consumers
 - ✅ **Dependency Injection** - Centralized AppContainer
 - ✅ **Redis Storage** - Shared storage instances for producer & consumer
+- ✅ **Graceful Shutdown** - Ctrl+C handler for clean exit
+- ✅ **Unique Worker ID** - Timestamp-based worker identification
 - ✅ **Type Safety** - Trait objects for flexibility
 
 ## Prerequisites
@@ -42,11 +44,21 @@ cargo run --bin worker
 Output:
 ```
 Starting Apalis Job Worker...
+Press Ctrl+C to shutdown gracefully...
+
+Worker ID: 1771412612
+Worker Concurrency:
+  - Order: 3 instances
+  - Email: 2 instances
+
 Registering order worker...
 Registering email worker...
+
 Starting monitor...
-Starting order worker instance 0
-Starting email worker instance 0
+All workers registered successfully!
+
+  → Starting order worker instance 1/3
+  → Starting email worker instance 1/2
 ```
 
 ### 3. Start REST API (Terminal 2)
@@ -57,10 +69,15 @@ cargo run --bin rest
 
 Output:
 ```
+Starting REST API Server...
+Press Ctrl+C to shutdown gracefully...
+
 REST API running on http://0.0.0.0:3000
 POST /orders - Create order email job
 GET  /health - Health check
 ```
+
+**Graceful Shutdown:** Both worker and REST API support Ctrl+C for clean shutdown.
 
 ### 4. Send Job via REST API
 
@@ -208,6 +225,21 @@ pub fn create_order_storage(&self) -> RedisStorage<OrderJob> {
 }
 ```
 
+### Worker restart error: "worker is still active"
+
+**Problem:** Redis still has worker metadata from previous run.
+
+**Solution:** Two options:
+
+1. **Flush Redis (quick fix):**
+```bash
+redis-cli FLUSHALL
+```
+
+2. **Wait for worker timeout (default 60 seconds)** - Worker metadata will expire automatically.
+
+**Note:** This project uses unique worker IDs (timestamp-based), so restart usually works without flushing.
+
 ## Dependencies
 
 | Dependency | Version | Purpose |
@@ -228,6 +260,8 @@ pub fn create_order_storage(&self) -> RedisStorage<OrderJob> {
 4. **Type Safety** - Trait objects ensure compile-time checks
 5. **Testability** - Each layer can be tested independently
 6. **Scalability** - Easy to add new job types
+7. **Graceful Shutdown** - Clean exit on Ctrl+C
+8. **Worker Concurrency** - Configurable parallel processing
 
 ## Contributing
 

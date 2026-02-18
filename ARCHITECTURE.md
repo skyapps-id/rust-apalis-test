@@ -1,6 +1,17 @@
 # Clean Architecture Job Processing with Apalis
 
-This project demonstrates a **clean architecture pattern** for building job processing systems with Rust and Apalis, featuring REST API, trait-based usecases, and dependency injection.
+This project demonstrates a **clean architecture pattern** for building job processing systems with Rust and Apalis, featuring REST API, trait-based usecases, dependency injection, and configurable worker concurrency.
+
+## Table of Contents
+
+- [Architecture Overview](#architecture-overview)
+- [Project Structure](#project-structure)
+- [Data Flow](#data-flow)
+- [Key Patterns](#key-patterns)
+- [Worker Concurrency](#worker-concurrency)
+- [Graceful Shutdown](#graceful-shutdown)
+- [How to Add a New Job Type](#how-to-add-a-new-job-type)
+- [Common Issues & Solutions](#common-issues--solutions)
 
 ## Architecture Overview
 
@@ -56,7 +67,7 @@ Contains worker registration and REST server setup.
   - `router.rs`: `create_router()`, `run_server()`
   - `mod.rs`: `ServerState` with `AppContainer`
 - **`worker/`**: Worker registration and monitoring
-  - `register.rs`: `run_jobs()`, Monitor setup
+  - `register.rs`: `run_jobs()`, Monitor setup, WorkerConfig
 
 ### 5. Storage Layer (`src/storage/`)
 Provides storage abstractions for job queues.
@@ -139,7 +150,7 @@ rust-apalis-test/
 │   │   │   ├── router.rs     # Router & server config
 │   │   │   └── mod.rs        # ServerState
 │   │   ├── worker/           # Worker registration
-│   │   │   ├── register.rs   # run_jobs, monitor
+│   │   │   ├── register.rs   # run_jobs, monitor, WorkerConfig
 │   │   │   └── mod.rs
 │   │   └── mod.rs
 │   └── storage/               # Storage abstraction
@@ -256,6 +267,122 @@ pub async fn order_handler_fn(
     attempt: Attempt,
 ) -> Result<(), ...>
 ```
+
+## Worker Concurrency
+
+### Configuration
+
+Worker concurrency is configured via `WorkerConfig`:
+
+```rust
+pub struct WorkerConfig {
+    pub order_concurrency: usize,  // Number of parallel order workers
+    pub email_concurrency: usize,  // Number of parallel email workers
+}
+
+impl Default for WorkerConfig {
+    fn default() -> Self {
+        Self {
+            order_concurrency: 2,  // Default: 2 workers
+            email_concurrency: 2,
+        }
+    }
+}
+```
+
+### Usage
+
+```rust
+// Use default concurrency (2 workers per type)
+run_jobs(&storage_factory, container).await?;
+
+// Or configure custom concurrency
+let worker_config = WorkerConfig {
+    order_concurrency: 4,  // 4 parallel order workers
+    email_concurrency: 2,  // 2 parallel email workers
+};
+
+run_jobs_with_config(&storage_factory, container, worker_config).await?;
+```
+
+### Startup Output
+
+```
+Worker ID: 1771412612
+Worker Concurrency:
+  - Order: 3 instances
+  - Email: 2 instances
+
+Registering order worker...
+Registering email worker...
+
+Starting monitor...
+All workers registered successfully!
+
+  → Starting order worker instance 1/3
+  → Starting order worker instance 2/3
+  → Starting order worker instance 3/3
+  → Starting email worker instance 1/2
+  → Starting email worker instance 2/2
+```
+
+### Choosing Concurrency
+
+**Guidelines:**
+
+1. **CPU-bound tasks** (heavy computation):
+   ```rust
+   order_concurrency: num_cpus::get() - 1
+   ```
+
+2. **I/O-bound tasks** (API calls, database, network):
+   ```rust
+   order_concurrency: num_cpus::get() * 2
+   ```
+
+3. **Mixed workload**:
+   - Start with default (2)
+   - Monitor queue depth in Redis
+   - Increase if tasks pile up
+   - Decrease if CPU/memory saturated
+
+## Graceful Shutdown
+
+Both worker and REST API implement graceful shutdown via Ctrl+C handler:
+
+### Worker Shutdown
+
+```rust
+// Setup signal handler
+let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
+
+tokio::spawn(async move {
+    match tokio::signal::ctrl_c().await {
+        Ok(()) => {
+            println!("\nReceived shutdown signal, stopping worker...");
+            let _ = shutdown_tx.send(());
+        }
+        // ...
+    }
+});
+
+// Run until shutdown signal
+tokio::select! {
+    result = run_jobs(...) => { result?; }
+    _ = &mut shutdown_rx => {
+        println!("Worker shutting down gracefully...");
+    }
+}
+```
+
+### REST API Shutdown
+
+Similar pattern for REST API server.
+
+**Benefits:**
+- Clean exit on Ctrl+C
+- Prevents "worker is still active" errors
+- Allows multiple restarts without Redis flush
 
 ## How to Add a New Job Type
 
@@ -423,9 +550,16 @@ Add to `src/server/worker/register.rs`:
 use crate::handler::workflow::notification::notification_handler_fn;
 use crate::AppContainer;
 
-pub async fn run_jobs(
+pub struct WorkerConfig {
+    pub order_concurrency: usize,
+    pub email_concurrency: usize,
+    pub notification_concurrency: usize,  // NEW
+}
+
+pub async fn run_jobs_with_config(
     storage_factory: &Arc<StorageFactory>,
     container: AppContainer,
+    config: WorkerConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut monitor = Monitor::new();
 
@@ -443,9 +577,14 @@ pub async fn run_jobs(
 
     monitor = monitor.register({
         let notification_service = container.notification_service.clone();
+        let worker_id = worker_id.clone();
+        let concurrency = config.notification_concurrency;
+
         move |count| {
-            println!("Starting notification worker instance {}", count);
-            WorkerBuilder::new(format!("notification-worker-{}", count))
+            if count < concurrency {
+                println!("  → Starting notification worker instance {}/{}", count + 1, concurrency);
+            }
+            WorkerBuilder::new(format!("notification-worker-{}-{}", worker_id, count))
                 .backend(notification_storage.clone())
                 .data(notification_service.clone())
                 .retry(RetryPolicy::retries(3).with_backoff(notification_backoff.clone()))
@@ -453,7 +592,11 @@ pub async fn run_jobs(
         }
     });
 
+    println!();
     println!("Starting monitor...");
+    println!("All workers registered successfully!");
+    println!();
+
     monitor.run().await?;
     Ok(())
 }
@@ -535,6 +678,9 @@ curl -X POST http://localhost:3000/orders \
 5. **Shared Storage** - Single RedisStorage instance per job type
 6. **Easy to Extend** - Adding new jobs requires touching specific files only
 7. **Testability** - Each layer can be tested independently
+8. **Worker Concurrency** - Configurable parallel processing per job type
+9. **Graceful Shutdown** - Clean exit handling for both worker and REST API
+10. **Unique Worker IDs** - Timestamp-based identification prevents conflicts
 
 ## Common Issues & Solutions
 
@@ -563,3 +709,31 @@ ctx: Data<std::sync::Arc<OrderService>>
 **Solution:** Ensure `StorageFactory` returns **shared Arc instances**, not new storage each time.
 
 See [Shared Storage Pattern](#3-shared-storage-instances) above.
+
+### Issue: Worker restart fails with "worker is still active"
+
+**Symptom:** Worker fails to start after crash/force-quit.
+
+**Solution:**
+- Wait 60 seconds for Redis timeout, OR
+- Flush Redis: `redis-cli FLUSHALL`
+
+**Prevention:** Use graceful shutdown (Ctrl+C) instead of force-quit.
+
+### Issue: Adjusting worker concurrency
+
+**Current approach:** Configure via `WorkerConfig`:
+
+```rust
+let worker_config = WorkerConfig {
+    order_concurrency: 3,  // 3 parallel order workers
+    email_concurrency: 2,  // 2 parallel email workers
+};
+
+run_jobs_with_config(&storage_factory, container, worker_config).await?;
+```
+
+**Guidelines:**
+- **CPU-bound tasks**: `num_cpus - 1` workers
+- **I/O-bound tasks**: `num_cpus * 2` workers
+- **Mixed tasks**: Profile and adjust based on metrics
