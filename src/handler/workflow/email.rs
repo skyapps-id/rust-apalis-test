@@ -9,10 +9,9 @@ pub async fn email_handler_fn(
     ctx: Data<std::sync::Arc<dyn EmailSender>>,
     attempt: Attempt,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("=== EMAIL HANDLER CALLED ===");
-    println!("Attempt: {}", attempt.current());
-    
+    println!("[email_handler_fn] Attempt: {}", attempt.current());
+
     ctx.send_email(job).await?;
-    
+
     Ok(())
 }

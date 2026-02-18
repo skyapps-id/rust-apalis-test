@@ -9,10 +9,9 @@ pub async fn order_handler_fn(
     ctx: Data<std::sync::Arc<dyn OrderUsecase>>,
     attempt: Attempt,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("=== ORDER HANDLER CALLED ===");
-    println!("Attempt: {}", attempt.current());
-    
+    println!("[order_handler_fn] Attempt: {}", attempt.current());
+
     ctx.process_order(job).await?;
-    
+
     Ok(())
 }
