@@ -20,6 +20,14 @@ pub async fn run_jobs(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut monitor = Monitor::new();
 
+    // Generate unique worker ID based on timestamp
+    let worker_id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+
+    println!("Worker ID: {}", worker_id);
+    println!();
+
     println!("Registering order worker...");
     let order_storage = storage_factory.create_order_storage();
     let order_backoff = ExponentialBackoffMaker::new(
@@ -32,9 +40,10 @@ pub async fn run_jobs(
 
     monitor = monitor.register({
         let order_service = container.order_service.clone();
+        let worker_id = worker_id.clone();
         move |count| {
-            println!("Starting order worker instance {}", count);
-            WorkerBuilder::new(format!("order-worker-{}", count))
+            println!("Starting order worker instance {} (worker-id: {})", count, worker_id);
+            WorkerBuilder::new(format!("order-worker-{}-{}", worker_id, count))
                 .backend(order_storage.clone())
                 .data(order_service.clone())
                 .retry(RetryPolicy::retries(3).with_backoff(order_backoff.clone()))
@@ -54,9 +63,10 @@ pub async fn run_jobs(
 
     monitor = monitor.register({
         let email_service = container.email_service.clone();
+        let worker_id = worker_id.clone();
         move |count| {
-            println!("Starting email worker instance {}", count);
-            WorkerBuilder::new(format!("email-worker-{}", count))
+            println!("Starting email worker instance {} (worker-id: {})", count, worker_id);
+            WorkerBuilder::new(format!("email-worker-{}-{}", worker_id, count))
                 .backend(email_storage.clone())
                 .data(email_service.clone())
                 .retry(RetryPolicy::retries(3).with_backoff(email_backoff.clone()))
@@ -64,7 +74,11 @@ pub async fn run_jobs(
         }
     });
 
+    println!();
     println!("Starting monitor...");
+    println!("Workers registered successfully!");
+    println!();
+
     monitor.run().await?;
     Ok(())
 }
