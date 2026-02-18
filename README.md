@@ -181,11 +181,79 @@ rust-apalis-test/
 This project follows **Clean Architecture** principles with clear separation of concerns:
 
 - **Domain Layer** - Pure business entities (no dependencies)
-- **Usecase Layer** - Business logic traits & implementations
+- **Usecase Layer** - Business logic traits & implementations with private helper methods
 - **Handler Layer** - HTTP request handlers & job handlers
 - **Server Layer** - Worker registration & REST server setup
 - **Storage Layer** - Redis storage abstraction
 - **Container** - Dependency injection
+
+### Private Helper Methods Pattern
+
+Services in the usecase layer use private helper methods for task scheduling:
+
+- `OrderService::schedule_order_task()` - Schedules order jobs to Redis queue
+- `OrderService::send_order_email()` - Schedules email notifications
+
+This pattern keeps trait methods clean and delegates task creation/storage logic to private methods.
+
+## Architecture Diagrams
+
+### System Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           RUST APALIS ARCHITECTURE                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐   │
+│  │   REST API  │───▶│   HANDLERS  │───▶│   USECASE   │───▶│   DOMAIN    │   │
+│  │   (Axum)    │    │  (rest/)    │    │  (traits)   │    │  (jobs)     │   │
+│  └─────────────┘    └─────────────┘    └──────┬──────┘    └─────────────┘   │
+│                                                  │                          │
+│                                                  ▼                          │
+│                                          ┌─────────────┐                    │
+│                                          │   STORAGE   │                    │
+│                                          │   (Redis)   │                    │
+│                                          └──────┬──────┘                    │
+│                                                 │                           │
+│                                                 ▼                           │
+│                                          ┌─────────────┐                    │
+│                                          │   WORKER    │                    │
+│                                          │  (Apalis)   │                    │
+│                                          └─────────────┘                    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Project Structure
+
+```
+rust-apalis-test/
+│
+├── bins/
+│   ├── rest/main.rs          ──▶  REST API Server Entry Point
+│   └── worker/main.rs        ──▶  Worker Entry Point
+│
+├── src/
+│   ├── domain/               ──▶  Job Types (OrderJob, EmailJob)
+│   ├── usecase/              ──▶  Business Logic (Traits + Impl)
+│   │   └── order.rs          ──▶  OrderUsecase + OrderService
+│   │       ├── create_order()
+│   │       ├── process_order()
+│   │       ├── schedule_order_task()  ← private helper
+│   │       └── send_order_email()     ← private helper
+│   ├── handler/
+│   │   ├── rest/             ──▶  HTTP Endpoints
+│   │   └── workflow/         ──▶  Job Handlers
+│   ├── server/
+│   │   ├── rest/             ──▶  Router & Server
+│   │   └── worker/           ──▶  Worker Registration
+│   ├── storage/
+│   │   └── redis.rs          ──▶  StorageFactory (Shared Instances)
+│   └── container.rs          ──▶  Dependency Injection
+│
+└── Cargo.toml
+```
 
 For detailed architecture information, see [ARCHITECTURE.md](ARCHITECTURE.md).
 

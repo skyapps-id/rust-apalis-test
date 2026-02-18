@@ -26,7 +26,7 @@ Contains all job types and business entities. **Zero dependencies** on other lay
 ### 2. Usecase Layer (`src/usecase/`)
 Contains business logic traits and implementations. This is where the **core business rules** live.
 
-- **`order.rs`**: `OrderUsecase` trait + `OrderService` implementation
+- **`order.rs`**: `OrderUsecase` trait + `OrderService` implementation with private helper methods
 - **`email.rs`**: `EmailSender` trait + `EmailService` implementation
 
 #### Trait-based Pattern
@@ -44,9 +44,42 @@ pub struct OrderService {
     storage: Arc<StorageFactory>,
 }
 
+impl OrderService {
+    // Private helper method for scheduling order tasks
+    async fn schedule_order_task(&self, event_id: String, device_uuid: String)
+        -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut storage = self.storage.create_order_storage();
+        let task = Task::builder(OrderJob {
+            event_id: event_id.clone(),
+            device_uuid,
+        })
+        .run_in_seconds(5)
+        .build();
+        storage.push_task(task).await?;
+        Ok(())
+    }
+
+    // Private helper method for sending order emails
+    async fn send_order_email(&self, event_id: String)
+        -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Email scheduling logic...
+    }
+}
+
 #[async_trait]
 impl OrderUsecase for OrderService {
-    // Implementation...
+    async fn create_order(&self, event_id: String, device_uuid: String)
+        -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        self.schedule_order_task(event_id.clone(), device_uuid).await?;
+        Ok(event_id)
+    }
+
+    async fn process_order(&self, job: OrderJob)
+        -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Processing logic...
+        self.send_order_email(job.event_id).await?;
+        Ok(())
+    }
 }
 ```
 
