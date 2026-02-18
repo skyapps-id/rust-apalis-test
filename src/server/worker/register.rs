@@ -14,9 +14,32 @@ use crate::storage::redis::StorageFactory;
 use crate::handler::workflow::{email::email_handler_fn, order::order_handler_fn};
 use crate::AppContainer;
 
+/// Worker configuration
+pub struct WorkerConfig {
+    pub order_concurrency: usize,
+    pub email_concurrency: usize,
+}
+
+impl Default for WorkerConfig {
+    fn default() -> Self {
+        Self {
+            order_concurrency: 2,  // Default: 2 concurrent workers
+            email_concurrency: 2,  // Default: 2 concurrent workers
+        }
+    }
+}
+
 pub async fn run_jobs(
     storage_factory: &Arc<StorageFactory>,
     container: AppContainer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    run_jobs_with_config(storage_factory, container, WorkerConfig::default()).await
+}
+
+pub async fn run_jobs_with_config(
+    storage_factory: &Arc<StorageFactory>,
+    container: AppContainer,
+    config: WorkerConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut monitor = Monitor::new();
 
@@ -26,8 +49,12 @@ pub async fn run_jobs(
         .as_secs();
 
     println!("Worker ID: {}", worker_id);
+    println!("Worker Concurrency:");
+    println!("  - Order: {} instances", config.order_concurrency);
+    println!("  - Email: {} instances", config.email_concurrency);
     println!();
 
+    // Register ORDER workers
     println!("Registering order worker...");
     let order_storage = storage_factory.create_order_storage();
     let order_backoff = ExponentialBackoffMaker::new(
@@ -41,8 +68,12 @@ pub async fn run_jobs(
     monitor = monitor.register({
         let order_service = container.order_service.clone();
         let worker_id = worker_id.clone();
+        let concurrency = config.order_concurrency;
+
         move |count| {
-            println!("Starting order worker instance {} (worker-id: {})", count, worker_id);
+            if count < concurrency {
+                println!("  → Starting order worker instance {}/{}", count + 1, concurrency);
+            }
             WorkerBuilder::new(format!("order-worker-{}-{}", worker_id, count))
                 .backend(order_storage.clone())
                 .data(order_service.clone())
@@ -51,6 +82,7 @@ pub async fn run_jobs(
         }
     });
 
+    // Register EMAIL workers
     println!("Registering email worker...");
     let email_storage = storage_factory.create_email_storage();
     let email_backoff = ExponentialBackoffMaker::new(
@@ -64,8 +96,12 @@ pub async fn run_jobs(
     monitor = monitor.register({
         let email_service = container.email_service.clone();
         let worker_id = worker_id.clone();
+        let concurrency = config.email_concurrency;
+
         move |count| {
-            println!("Starting email worker instance {} (worker-id: {})", count, worker_id);
+            if count < concurrency {
+                println!("  → Starting email worker instance {}/{}", count + 1, concurrency);
+            }
             WorkerBuilder::new(format!("email-worker-{}-{}", worker_id, count))
                 .backend(email_storage.clone())
                 .data(email_service.clone())
@@ -76,7 +112,7 @@ pub async fn run_jobs(
 
     println!();
     println!("Starting monitor...");
-    println!("Workers registered successfully!");
+    println!("All workers registered successfully!");
     println!();
 
     monitor.run().await?;
