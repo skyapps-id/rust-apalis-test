@@ -1,34 +1,113 @@
 # Clean Architecture Job Processing with Apalis
 
-This project demonstrates a clean architecture pattern for building job processing systems with Rust and Apalis.
+This project demonstrates a **clean architecture pattern** for building job processing systems with Rust and Apalis, featuring REST API, trait-based usecases, and dependency injection.
 
 ## Architecture Overview
 
-The project is organized into four main layers following clean architecture principles:
+The project is organized into **six main layers** following clean architecture principles:
 
 ### 1. Domain Layer (`src/domain/`)
-Contains all job types and business entities.
+Contains all job types and business entities. **Zero dependencies** on other layers.
 
-- **`jobs.rs`**: All job type definitions (`OtaTimeoutJob`, `AlertJob`, `EmailJob`)
+- **`jobs.rs`**: All job type definitions (`OrderJob`, `EmailJob`, `AlertJob`)
 - **`enums.rs`**: Domain enums (`AlertType`, `Severity`)
 
-### 2. Workflow Layer (`src/workflow/`)
-Contains job handlers and business logic.
+### 2. Usecase Layer (`src/usecase/`)
+Contains business logic traits and implementations. This is where the **core business rules** live.
 
-- **`handler.rs`**: The `JobHandler` trait that all handlers implement
-- **`handlers/`**: Individual handler implementations (e.g., `ota_timeout.rs`)
+- **`order.rs`**: `OrderUsecase` trait + `OrderService` implementation
+- **`email.rs`**: `EmailSender` trait + `EmailService` implementation
 
-### 3. Server Layer (`src/server/`)
-Contains worker implementations and monitoring.
+#### Trait-based Pattern
 
-- **`monitor.rs`**: `JobRegistry` for registering and running all workers
-- **`worker_config.rs`**: Configuration types for workers (retry policy, etc.)
-- **`workers/`**: Individual worker implementations (handler functions)
+```rust
+#[async_trait]
+pub trait OrderUsecase: Send + Sync {
+    async fn create_order(&self, event_id: String, device_uuid: String)
+        -> Result<String, Box<dyn std::error::Error + Send + Sync>>;
+    async fn process_order(&self, job: OrderJob)
+        -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+}
 
-### 4. Storage Layer (`src/storage/`)
+pub struct OrderService {
+    storage: Arc<StorageFactory>,
+}
+
+#[async_trait]
+impl OrderUsecase for OrderService {
+    // Implementation...
+}
+```
+
+### 3. Handler Layer (`src/handler/`)
+Contains HTTP request handlers and job handlers. This layer **delegates to usecases**.
+
+- **`rest/`**: HTTP handlers for Axum REST API
+  - `order.rs`: `create_order` endpoint
+  - `health.rs`: `health_check` endpoint
+- **`workflow/`**: Job handlers for Apalis workers
+  - `order.rs`: `order_handler_fn`
+  - `email.rs`: `email_handler_fn`
+
+### 4. Server Layer (`src/server/`)
+Contains worker registration and REST server setup.
+
+- **`rest/`**: REST API router and server configuration
+  - `router.rs`: `create_router()`, `run_server()`
+  - `mod.rs`: `ServerState` with `AppContainer`
+- **`worker/`**: Worker registration and monitoring
+  - `register.rs`: `run_jobs()`, Monitor setup
+
+### 5. Storage Layer (`src/storage/`)
 Provides storage abstractions for job queues.
 
-- **`redis.rs`**: `StorageFactory` for creating Redis-backed storages
+- **`redis.rs`**: `StorageFactory` with **shared storage instances**
+
+#### Shared Storage Pattern
+
+```rust
+pub struct StorageFactory {
+    conn: ConnectionManager,
+    order_storage: Arc<RedisStorage<OrderJob>>,  // Shared!
+    email_storage: Arc<RedisStorage<EmailJob>>,  // Shared!
+    // ...
+}
+
+impl StorageFactory {
+    pub fn new(conn: ConnectionManager) -> Self {
+        let order_storage = Arc::new(RedisStorage::new(conn.clone()));
+        // ...
+    }
+
+    pub fn create_order_storage(&self) -> RedisStorage<OrderJob> {
+        (*self.order_storage).clone()  // Clone Arc, not new storage
+    }
+}
+```
+
+**Why?** Producer and consumer must use the **same storage instance** to share the same Redis queue.
+
+### 6. Container (`container.rs`)
+Dependency injection container that provides all dependencies.
+
+```rust
+#[derive(Clone)]
+pub struct AppContainer {
+    pub storage: Arc<StorageFactory>,
+    pub email_service: Arc<dyn EmailSender>,
+    pub order_service: Arc<dyn OrderUsecase>,
+}
+
+impl AppContainer {
+    pub fn new(storage: Arc<StorageFactory>) -> Self {
+        let order_service = Arc::new(OrderService::new(storage.clone()))
+            as Arc<dyn OrderUsecase>;
+        let email_service = Arc::new(EmailService) as Arc<dyn EmailSender>;
+
+        Self { storage, email_service, order_service }
+    }
+}
+```
 
 ## Project Structure
 
@@ -36,175 +115,387 @@ Provides storage abstractions for job queues.
 rust-apalis-test/
 ├── src/
 │   ├── lib.rs                 # Public API exports
-│   ├── domain/                # Job types & domain logic
-│   │   ├── mod.rs
-│   │   ├── jobs.rs           # All job definitions
-│   │   └── enums.rs          # AlertType, Severity, etc.
-│   ├── workflow/              # Job handlers (business logic)
-│   │   ├── mod.rs
-│   │   ├── handler.rs        # JobHandler trait
-│   │   └── handlers/
-│   │       ├── mod.rs
-│   │       └── ota_timeout.rs
-│   ├── server/                # Worker implementations
-│   │   ├── mod.rs
-│   │   ├── monitor.rs        # JobRegistry for worker registration
-│   │   ├── worker_config.rs  # Worker configuration types
-│   │   └── workers/
-│   │       ├── mod.rs
-│   │       └── ota_timeout.rs
+│   ├── container.rs           # AppContainer (DI)
+│   ├── domain/                # Job types & domain entities
+│   │   ├── jobs.rs           # OrderJob, EmailJob, AlertJob
+│   │   ├── enums.rs          # Domain enums
+│   │   └── mod.rs
+│   ├── usecase/               # Business logic (traits)
+│   │   ├── order.rs          # OrderUsecase + OrderService
+│   │   ├── email.rs          # EmailSender + EmailService
+│   │   └── mod.rs
+│   ├── handler/               # Request/Job handlers
+│   │   ├── rest/             # HTTP handlers (Axum)
+│   │   │   ├── order.rs      # POST /orders
+│   │   │   ├── health.rs     # GET /health
+│   │   │   └── mod.rs
+│   │   ├── workflow/         # Job handlers (Apalis)
+│   │   │   ├── order.rs      # order_handler_fn
+│   │   │   ├── email.rs      # email_handler_fn
+│   │   │   └── mod.rs
+│   │   └── mod.rs
+│   ├── server/                # Server setup & worker registration
+│   │   ├── rest/             # REST API
+│   │   │   ├── router.rs     # Router & server config
+│   │   │   └── mod.rs        # ServerState
+│   │   ├── worker/           # Worker registration
+│   │   │   ├── register.rs   # run_jobs, monitor
+│   │   │   └── mod.rs
+│   │   └── mod.rs
 │   └── storage/               # Storage abstraction
-│       ├── mod.rs
-│       └── redis.rs
+│       ├── redis.rs          # StorageFactory (shared instances)
+│       └── mod.rs
 ├── bins/                      # Binary executables
-│   ├── worker/main.rs        # Worker binary
-│   └── producer/main.rs      # Producer binary
+│   ├── rest/main.rs          # REST API server
+│   └── worker/main.rs        # Worker
 ├── Cargo.toml
+├── ARCHITECTURE.md
 └── README.md
+```
+
+## Data Flow
+
+### Creating a Job via REST API
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant REST_Handler
+    participant OrderUsecase
+    participant Redis_Storage
+    participant Worker
+
+    Client->>REST_Handler: POST /orders
+    REST_Handler->>OrderUsecase: create_order()
+    OrderUsecase->>Redis_Storage: push_task()
+    Note over Redis_Storage: Job queued
+    OrderUsecase-->>REST_Handler: Ok(event_id)
+    REST_Handler-->>Client: 201 Created
+    Worker->>Redis_Storage: poll task
+    Worker->>OrderUsecase: process_order()
+    OrderUsecase-->>Worker: Ok(())
+```
+
+## Key Patterns
+
+### 1. Trait-based Usecase
+
+Business logic is defined as **traits**, allowing for:
+- Multiple implementations
+- Easy testing with mocks
+- Dependency injection via trait objects
+
+```rust
+// Define trait
+#[async_trait]
+pub trait OrderUsecase: Send + Sync {
+    async fn process_order(&self, job: OrderJob) -> Result<(), ...>;
+}
+
+// Implement for struct
+pub struct OrderService { ... }
+
+#[async_trait]
+impl OrderUsecase for OrderService {
+    async fn process_order(&self, job: OrderJob) -> Result<(), ...> {
+        // Business logic here
+    }
+}
+
+// Use as trait object in container
+pub order_service: Arc<dyn OrderUsecase>
+```
+
+### 2. Dependency Injection
+
+All dependencies are provided via `AppContainer`:
+
+```rust
+let container = AppContainer::new(storage);
+let state = ServerState::new(container);
+```
+
+This makes testing easy - just create a test container with mock implementations.
+
+### 3. Shared Storage Instances
+
+**Critical:** Producer and consumer must use the same `RedisStorage` instance:
+
+```rust
+// ✅ CORRECT - Shared Arc
+pub struct StorageFactory {
+    order_storage: Arc<RedisStorage<OrderJob>>,
+}
+
+pub fn create_order_storage(&self) -> RedisStorage<OrderJob> {
+    (*self.order_storage).clone()  // Clone Arc
+}
+
+// ❌ WRONG - New instance each time
+pub fn create_order_storage(&self) -> RedisStorage<OrderJob> {
+    RedisStorage::new(self.conn.clone())  // Different queue!
+}
+```
+
+### 4. Trait Objects in Handlers
+
+Workers must use **trait objects**, not concrete types:
+
+```rust
+// ✅ CORRECT - Trait object
+pub async fn order_handler_fn(
+    job: OrderJob,
+    ctx: Data<std::sync::Arc<dyn OrderUsecase>>,  // Trait object
+    attempt: Attempt,
+) -> Result<(), ...>
+
+// ❌ WRONG - Concrete type
+pub async fn order_handler_fn(
+    job: OrderJob,
+    ctx: Data<std::sync::Arc<OrderService>>,  // Concrete!
+    attempt: Attempt,
+) -> Result<(), ...>
 ```
 
 ## How to Add a New Job Type
 
-Follow these steps to add a new job type:
+Follow these steps to add a new job type (e.g., `NotificationJob`):
 
 ### Step 1: Define the Job in Domain Layer
 
-Add your job type to `src/domain/jobs.rs`:
+Add to `src/domain/jobs.rs`:
 
 ```rust
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct MyNewJob {
-    pub id: String,
-    pub data: String,
+pub struct NotificationJob {
+    pub user_id: String,
+    pub message: String,
+    pub channel: String,
 }
 ```
 
-### Step 2: Implement the Handler
-
-Create `src/workflow/handlers/my_new_job.rs`:
+Export in `src/domain/mod.rs`:
 
 ```rust
-use crate::domain::jobs::MyNewJob;
-use crate::workflow::handler::JobHandler;
+pub use jobs::NotificationJob;
+```
 
-#[derive(Clone)]
-pub struct MyNewJobHandler;
+### Step 2: Create Usecase Trait & Implementation
 
-impl Default for MyNewJobHandler {
-    fn default() -> Self {
-        Self
-    }
+Create `src/usecase/notification.rs`:
+
+```rust
+use async_trait::async_trait;
+use crate::domain::jobs::NotificationJob;
+
+#[async_trait]
+pub trait NotificationUsecase: Send + Sync {
+    async fn send_notification(&self, job: NotificationJob)
+        -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }
 
-impl JobHandler for MyNewJobHandler {
-    type Job = MyNewJob;
+pub struct NotificationService;
 
-    async fn handle(
-        &self,
-        job: Self::Job,
-        attempt: usize,
-        max_retries: usize,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Your business logic here
-        println!("Processing job: {}", job.id);
+#[async_trait]
+impl NotificationUsecase for NotificationService {
+    async fn send_notification(&self, job: NotificationJob)
+        -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        println!("Sending notification to user {} via {}: {}",
+            job.user_id, job.channel, job.message);
         Ok(())
     }
 }
 ```
 
-Update `src/workflow/handlers/mod.rs`:
+Export in `src/usecase/mod.rs`:
 
 ```rust
-pub mod my_new_job;
-pub use my_new_job::MyNewJobHandler;
+pub mod notification;
+pub use notification::{NotificationUsecase, NotificationService};
 ```
 
-### Step 3: Create Worker Handler Function
+### Step 3: Create Workflow Handler
 
-Create `src/server/workers/my_new_job.rs`:
+Create `src/handler/workflow/notification.rs`:
 
 ```rust
 use apalis::prelude::*;
 use apalis_core::task::attempt::Attempt;
-use std::sync::Arc;
-use crate::domain::jobs::MyNewJob;
-use crate::workflow::{JobHandler, handlers::MyNewJobHandler};
+use crate::domain::jobs::NotificationJob;
+use crate::usecase::{NotificationService, NotificationUsecase};
 
-pub async fn my_new_job_handler_fn(
-    job: MyNewJob,
-    handler: Data<Arc<MyNewJobHandler>>,
+pub async fn notification_handler_fn(
+    job: NotificationJob,
+    ctx: Data<std::sync::Arc<dyn NotificationUsecase>>,
     attempt: Attempt,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    handler.handle(job, attempt.current(), 3).await
+    println!("=== NOTIFICATION HANDLER CALLED ===");
+    println!("Attempt: {}", attempt.current());
+
+    ctx.send_notification(job).await?;
+
+    Ok(())
 }
 ```
 
-Update `src/server/workers/mod.rs`:
+Export in `src/handler/workflow/mod.rs`:
 
 ```rust
-pub mod my_new_job;
-pub use my_new_job::my_new_job_handler_fn;
+pub mod notification;
+pub use notification::notification_handler_fn;
 ```
 
-### Step 4: Register the Job
+### Step 4: Update StorageFactory
 
-Update `src/server/monitor.rs`:
-
-1. Add storage field to `JobRegistry`:
+Add to `src/storage/redis.rs`:
 
 ```rust
-pub struct JobRegistry {
-    // ... existing fields
-    pub my_new_job_storage: Option<RedisStorage<MyNewJob>>,
-    pub my_new_job_handler: Arc<MyNewJobHandler>,
-    pub my_new_job_retry_config: WorkerRetryConfig,
+use crate::domain::jobs::NotificationJob;
+
+pub struct StorageFactory {
+    conn: ConnectionManager,
+    order_storage: Arc<RedisStorage<OrderJob>>,
+    email_storage: Arc<RedisStorage<EmailJob>>,
+    notification_storage: Arc<RedisStorage<NotificationJob>>,  // NEW
+    alert_storage: Arc<RedisStorage<AlertJob>>,
+}
+
+impl StorageFactory {
+    pub fn new(conn: ConnectionManager) -> Self {
+        let order_storage = Arc::new(RedisStorage::new(conn.clone()));
+        let email_storage = Arc::new(RedisStorage::new(conn.clone()));
+        let notification_storage = Arc::new(RedisStorage::new(conn.clone()));  // NEW
+        let alert_storage = Arc::new(RedisStorage::new(conn));
+
+        Self {
+            conn,
+            order_storage,
+            email_storage,
+            notification_storage,
+            alert_storage,
+        }
+    }
+
+    pub fn create_notification_storage(&self) -> RedisStorage<NotificationJob> {
+        (*self.notification_storage).clone()
+    }
 }
 ```
 
-2. Add builder methods:
+### Step 5: Update AppContainer
+
+Add to `src/container.rs`:
 
 ```rust
-pub fn with_my_new_job_storage(mut self, storage: RedisStorage<MyNewJob>) -> Self {
-    self.my_new_job_storage = Some(storage);
-    self
+use crate::usecase::{NotificationService, NotificationUsecase};
+
+#[derive(Clone)]
+pub struct AppContainer {
+    pub storage: Arc<StorageFactory>,
+    pub email_service: Arc<dyn EmailSender>,
+    pub order_service: Arc<dyn OrderUsecase>,
+    pub notification_service: Arc<dyn NotificationUsecase>,  // NEW
+}
+
+impl AppContainer {
+    pub fn new(storage: Arc<StorageFactory>) -> Self {
+        let order_service = Arc::new(OrderService::new(storage.clone()))
+            as Arc<dyn OrderUsecase>;
+        let email_service = Arc::new(EmailService) as Arc<dyn EmailSender>;
+        let notification_service = Arc::new(NotificationService)  // NEW
+            as Arc<dyn NotificationUsecase>;
+
+        Self {
+            storage,
+            email_service,
+            order_service,
+            notification_service,
+        }
+    }
 }
 ```
 
-3. Register worker in `run()` method:
+### Step 6: Register Worker
+
+Add to `src/server/worker/register.rs`:
 
 ```rust
-if let Some(storage) = self.my_new_job_storage {
-    let handler = self.my_new_job_handler;
-    let config = self.my_new_job_retry_config;
+use crate::handler::workflow::notification::notification_handler_fn;
+use crate::AppContainer;
 
-    monitor = monitor.register(move |count| {
-        // ... worker configuration
-        WorkerBuilder::new(format!("my-new-job-worker-{}", count))
-            .backend(storage.clone())
-            .retry(/* ... */)
-            .data(handler.clone())
-            .build(my_new_job_handler_fn)
+pub async fn run_jobs(
+    storage_factory: &Arc<StorageFactory>,
+    container: AppContainer,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut monitor = Monitor::new();
+
+    // ... existing workers ...
+
+    // NEW: Register notification worker
+    println!("Registering notification worker...");
+    let notification_storage = storage_factory.create_notification_storage();
+    let notification_backoff = ExponentialBackoffMaker::new(
+        Duration::from_secs(2),
+        Duration::from_secs(10),
+        0.5,
+        HasherRng::new(),
+    )?.make_backoff();
+
+    monitor = monitor.register({
+        let notification_service = container.notification_service.clone();
+        move |count| {
+            println!("Starting notification worker instance {}", count);
+            WorkerBuilder::new(format!("notification-worker-{}", count))
+                .backend(notification_storage.clone())
+                .data(notification_service.clone())
+                .retry(RetryPolicy::retries(3).with_backoff(notification_backoff.clone()))
+                .build(notification_handler_fn)
+        }
     });
+
+    println!("Starting monitor...");
+    monitor.run().await?;
+    Ok(())
 }
 ```
 
-4. Add storage factory method to `src/storage/redis.rs`:
+### Step 7: (Optional) Add REST Endpoint
+
+If you want HTTP API for creating notifications, create `src/handler/rest/notification.rs`:
 
 ```rust
-pub fn create_my_new_job_storage(&self) -> RedisStorage<MyNewJob> {
-    RedisStorage::new(self.conn.clone())
+use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use serde::Deserialize;
+use crate::server::rest::ServerState;
+
+#[derive(Deserialize)]
+pub struct CreateNotificationRequest {
+    pub user_id: String,
+    pub message: String,
+    pub channel: String,
+}
+
+pub async fn create_notification(
+    State(state): State<ServerState>,
+    Json(payload): Json<CreateNotificationRequest>,
+) -> impl IntoResponse {
+    // Use usecase to create job
+    // Similar to create_order in src/handler/rest/order.rs
 }
 ```
 
-### Step 5: Update Worker Binary
-
-Update `bins/worker/main.rs` to include the new storage:
+Add route in `src/server/rest/router.rs`:
 
 ```rust
-JobRegistry::new()
-    .with_my_new_job_storage(storage_factory.create_my_new_job_storage())
-    .run()
-    .await?;
+use crate::handler::rest::notification::create_notification;
+
+pub fn create_router(state: ServerState) -> Router {
+    Router::new()
+        .route("/orders", post(create_order))
+        .route("/notifications", post(create_notification))  // NEW
+        .route("/health", get(health_check))
+        .with_state(state)
+}
 ```
 
 ## Running the Project
@@ -221,53 +512,54 @@ redis-server
 cargo run --bin worker
 ```
 
-### Produce Jobs
+### Start the REST API
 
 ```bash
-cargo run --bin producer
+cargo run --bin rest
+```
+
+### Test with cURL
+
+```bash
+curl -X POST http://localhost:3000/orders \
+  -H "Content-Type: application/json" \
+  -d '{"event_id":"EVT-001","device_uuid":"DEV-123"}'
 ```
 
 ## Design Benefits
 
-1. **Separation of Concerns**: Each layer has a clear responsibility
-2. **Easy to Extend**: Adding new jobs requires touching only a few files
-3. **Type Safety**: Rust's type system ensures job handlers match job types
-4. **Testability**: Handlers can be tested independently of workers
-5. **Reusability**: Common patterns (retry policy, storage) are abstracted
+1. **Clean Architecture** - Clear separation between layers
+2. **Trait-based** - Flexible business logic via traits
+3. **Dependency Injection** - Easy testing with mocks
+4. **Type Safety** - Trait objects ensure compile-time checks
+5. **Shared Storage** - Single RedisStorage instance per job type
+6. **Easy to Extend** - Adding new jobs requires touching specific files only
+7. **Testability** - Each layer can be tested independently
 
-## Key Patterns
+## Common Issues & Solutions
 
-### JobHandler Trait
-All handlers implement the `JobHandler` trait, ensuring consistent interfaces:
+### Issue: Worker not consuming tasks
 
-```rust
-pub trait JobHandler: Clone + Send + Sync + 'static {
-    type Job: Send + Sync;
+**Symptom:** Tasks in Redis but worker doesn't process them.
 
-    fn handle(
-        &self,
-        job: Self::Job,
-        attempt: usize,
-        max_retries: usize,
-    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send;
-}
+**Check task status:**
+```bash
+redis-cli HGETALL "rust_apalis_test::domain::jobs::OrderJob:meta:<TASK_ID>"
 ```
 
-### JobRegistry
-The `JobRegistry` provides a fluent API for configuring and running all workers:
-
+**Solution:** Ensure handler uses trait object:
 ```rust
-JobRegistry::new()
-    .with_ota_timeout_storage(storage)
-    .with_retry_config(config)
-    .run()
-    .await?;
+// ✅ CORRECT
+ctx: Data<std::sync::Arc<dyn OrderUsecase>>
+
+// ❌ WRONG
+ctx: Data<std::sync::Arc<OrderService>>
 ```
 
-### StorageFactory
-Centralized storage creation for all job types:
+### Issue: Storage queue mismatch
 
-```rust
-let factory = StorageFactory::new(conn);
-let storage = factory.create_ota_timeout_storage();
-```
+**Symptom:** Producer pushes to queue A, consumer listens to queue B.
+
+**Solution:** Ensure `StorageFactory` returns **shared Arc instances**, not new storage each time.
+
+See [Shared Storage Pattern](#3-shared-storage-instances) above.
