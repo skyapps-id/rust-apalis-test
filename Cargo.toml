@@ -25,3 +25,4 @@ serde = { version = "1", features = ["derive"] }
 chrono = "0.4"
 redis = { version = "0.32", features = ["tokio-comp", "connection-manager"] }
 tower = { version = "0.5" }
+async-trait = "0.1"

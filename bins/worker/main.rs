@@ -1,8 +1,7 @@
 use redis::{Client, aio::ConnectionManager};
-use rust_apalis_test::server::monitor::JobRegistry;
+use rust_apalis_test::server::worker::register::run_jobs;
 use rust_apalis_test::storage::redis::StorageFactory;
-use rust_apalis_test::server::worker_config::WorkerRetryConfig;
-use std::time::Duration;
+use rust_apalis_test::AppContainer;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -13,23 +12,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conn = ConnectionManager::new(redis_client).await?;
 
     let storage_factory = StorageFactory::new(conn);
+    let container = AppContainer::default();
 
-    // Create retry config for default jobs
-    let default_retry_config = WorkerRetryConfig::new(
-        3,
-        Duration::from_secs(2),
-        Duration::from_secs(10),
-        0.5,
-    );
-
-    // Build job registry and configure all workers
-    JobRegistry::new()
-        .with_order_storage(storage_factory.create_order_storage())
-        .with_order_retry_config(default_retry_config.clone())
-        .with_email_storage(storage_factory.create_email_storage())
-        .with_email_retry_config(default_retry_config)
-        .run()
-        .await?;
+    run_jobs(&storage_factory, container).await?;
 
     Ok(())
 }

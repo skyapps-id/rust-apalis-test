@@ -1,8 +1,6 @@
 //! Server layer - Worker implementations and monitoring.
 //!
-//! This module contains worker setup, configuration, and the monitor
+//! This module contains worker setup, configuration, and registration
 //! that coordinates all workers.
 
-pub mod monitor;
-pub mod worker_config;
-pub mod workers;
+pub mod worker;
