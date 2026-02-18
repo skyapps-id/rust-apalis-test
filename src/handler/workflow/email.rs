@@ -2,11 +2,11 @@ use apalis::prelude::*;
 use apalis_core::task::attempt::Attempt;
 
 use crate::domain::jobs::EmailJob;
-use crate::workflow::usecase::EmailService;
+use crate::usecase::EmailSender;
 
 pub async fn email_handler_fn(
     job: EmailJob,
-    ctx: Data<std::sync::Arc<EmailService>>,
+    ctx: Data<std::sync::Arc<dyn EmailSender>>,
     attempt: Attempt,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("=== EMAIL HANDLER CALLED ===");

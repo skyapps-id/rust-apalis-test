@@ -5,16 +5,17 @@
 use apalis::layers::retry::RetryPolicy;
 use apalis::prelude::{Monitor, WorkerBuilder};
 use apalis::layers::WorkerBuilderExt;
+use std::sync::Arc;
 use std::time::Duration;
 use tower::retry::backoff::{ExponentialBackoffMaker, MakeBackoff};
 use tower::util::rng::HasherRng;
 
 use crate::storage::redis::StorageFactory;
-use crate::workflow::handler::{email::email_handler_fn, order::order_handler_fn};
+use crate::handler::workflow::{email::email_handler_fn, order::order_handler_fn};
 use crate::AppContainer;
 
 pub async fn run_jobs(
-    storage_factory: &StorageFactory,
+    storage_factory: &Arc<StorageFactory>,
     container: AppContainer,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut monitor = Monitor::new();

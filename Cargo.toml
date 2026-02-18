@@ -8,8 +8,8 @@ name = "rust_apalis_test"
 path = "src/lib.rs"
 
 [[bin]]
-name = "producer"
-path = "bins/producer/main.rs"
+name = "rest"
+path = "bins/rest/main.rs"
 
 [[bin]]
 name = "worker"
@@ -22,7 +22,9 @@ apalis-core = { version = "1.0.0-rc.4" }
 apalis-workflow = { version = "0.1.0-rc.4" }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 chrono = "0.4"
 redis = { version = "0.32", features = ["tokio-comp", "connection-manager"] }
 tower = { version = "0.5" }
 async-trait = "0.1"
+axum = "0.8"

@@ -1,24 +1,23 @@
-use crate::workflow::usecase::{EmailService, OrderService};
+use crate::storage::redis::StorageFactory;
+use crate::usecase::{EmailSender, EmailService, OrderService, OrderUsecase};
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct AppContainer {
-    pub email_service: Arc<EmailService>,
-    pub order_service: Arc<OrderService>,
+    pub storage: Arc<StorageFactory>,
+    pub email_service: Arc<dyn EmailSender>,
+    pub order_service: Arc<dyn OrderUsecase>,
 }
 
 impl AppContainer {
-    pub fn new(email_service: Arc<EmailService>, order_service: Arc<OrderService>) -> Self {
+    pub fn new(storage: Arc<StorageFactory>) -> Self {
+        let order_service = Arc::new(OrderService::new(storage.clone())) as Arc<dyn OrderUsecase>;
+        let email_service = Arc::new(EmailService) as Arc<dyn EmailSender>;
+
         Self {
+            storage,
             email_service,
             order_service,
-        }
-    }
-
-    pub fn default() -> Self {
-        Self {
-            email_service: Arc::new(EmailService),
-            order_service: Arc::new(OrderService),
         }
     }
 }

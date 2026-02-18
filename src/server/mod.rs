@@ -3,4 +3,5 @@
 //! This module contains worker setup, configuration, and registration
 //! that coordinates all workers.
 
+pub mod rest;
 pub mod worker;
