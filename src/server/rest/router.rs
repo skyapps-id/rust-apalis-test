@@ -15,7 +15,8 @@ pub async fn run_server(addr: SocketAddr, state: ServerState) -> Result<(), Box<
     let app = create_router(state);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    println!("REST API running on http://{}", addr);
+    println!("🚀 Server starting...");
+    println!("REST API: http://{}", addr);
 
     axum::serve(listener, app).await?;
 

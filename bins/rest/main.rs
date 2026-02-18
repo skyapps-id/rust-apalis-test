@@ -1,6 +1,5 @@
-use redis::{Client, aio::ConnectionManager};
 use rust_apalis_test::server::rest::{run_server, ServerState};
-use rust_apalis_test::storage::redis::StorageFactory;
+use rust_apalis_test::storage::postgres::StorageFactory;
 use rust_apalis_test::AppContainer;
 use std::sync::Arc;
 
@@ -10,10 +9,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Press Ctrl+C to shutdown gracefully...");
     println!();
 
-    let redis_client = Client::open("redis://127.0.0.1:6379")?;
-    let conn = ConnectionManager::new(redis_client).await?;
+    let database_url = "postgres://root:root@localhost:5432/apalis-database";
+    let pool = sqlx::PgPool::connect(database_url).await?;
 
-    let storage_factory = Arc::new(StorageFactory::new(conn));
+    // Setup PostgreSQL tables for apalis
+    apalis_postgres::PostgresStorage::setup(&pool).await?;
+
+    let storage_factory = Arc::new(StorageFactory::new(pool));
     let container = AppContainer::new(storage_factory);
     let state = ServerState::new(container);
 

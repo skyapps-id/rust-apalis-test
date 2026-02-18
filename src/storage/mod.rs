@@ -3,6 +3,6 @@
 //! This module provides storage implementations and factory functions
 //! for creating job queue storages.
 
-pub mod redis;
+pub mod postgres;
 
-pub use redis::StorageFactory;
+pub use postgres::StorageFactory;

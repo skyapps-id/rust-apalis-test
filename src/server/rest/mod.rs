@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::storage::redis::StorageFactory;
+use crate::storage::postgres::StorageFactory;
 use crate::AppContainer;
 
 pub mod router;

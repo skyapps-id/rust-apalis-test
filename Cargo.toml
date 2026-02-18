@@ -15,16 +15,26 @@ path = "bins/rest/main.rs"
 name = "worker"
 path = "bins/worker/main.rs"
 
+[[bin]]
+name = "setup_migration"
+path = "bins/setup_migration/main.rs"
+
+[[bin]]
+name = "board"
+path = "bins/board/main.rs"
+
 [dependencies]
 apalis = { version = "1.0.0-rc.4", features = ["retry"] }
-apalis-redis = { version = "1.0.0-rc.3" }
+apalis-postgres = { version = "1.0.0-rc.3" }
 apalis-core = { version = "1.0.0-rc.4" }
-apalis-workflow = { version = "0.1.0-rc.4" }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = "0.4"
-redis = { version = "0.32", features = ["tokio-comp", "connection-manager"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres"] }
 tower = { version = "0.5" }
 async-trait = "0.1"
 axum = "0.8"
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+apalis-board = { version = "1.0.0-rc.3", features = ["axum"] }
+apalis-board-api = { version = "1.0.0-rc.3", features = ["axum"] }
