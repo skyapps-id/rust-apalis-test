@@ -1,10 +1,10 @@
 /target
 
-# UI Build
-/static/
-/apalis-board-web/
+# UI Build (commented to allow committing static files)
+# /static/
+# /apalis-board-web/
 
-# Node
+# Node (keep ignored)
 node_modules/
 package-lock.json
 

@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8" />
+
+    <title>Apalis Board</title>
+    
+<script type="module">
+import init, * as bindings from '/apalis-board-web-ede112675739ea07.js';
+const wasm = await init({ module_or_path: '/apalis-board-web-ede112675739ea07_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script>
+    <link rel="stylesheet" href="/input-1e127c9e25a59db8.css" integrity="sha384-AOdJTITS3E6iVN64jrycv9hS7QP98a7qbRderIzca/VNuYXa4lLnfsZb9RJw4AFB"/>
+<link rel="modulepreload" href="/apalis-board-web-ede112675739ea07.js" crossorigin="anonymous" integrity="sha384-mxHLJ4p14hrvtqkcwCe8IkA4Eqyp+fCZtsyPLTJ7qweqUxGNK6/YxUxX68upu9BS"><link rel="preload" href="/apalis-board-web-ede112675739ea07_bg.wasm" crossorigin="anonymous" integrity="sha384-vq1+QNvyDnCDzHf514L1icIR+Yl5OPM0Wl7uPm5znpSLx59FL/N84DS1fwAZpM9S" as="fetch" type="application/wasm"></head>
+
+<body class="h-screen overflow-hidden bg-background-dimmed text-white"></body>
+</html>
