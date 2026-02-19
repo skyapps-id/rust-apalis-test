@@ -10,7 +10,7 @@ use std::time::Duration;
 use tower::retry::backoff::{ExponentialBackoffMaker, MakeBackoff};
 use tower::util::rng::HasherRng;
 
-use crate::storage::redis::StorageFactory;
+use crate::storage::amqp::StorageFactory;
 use crate::handler::workflow::{email::email_handler_fn, order::order_handler_fn};
 use crate::AppContainer;
 
@@ -23,8 +23,8 @@ pub struct WorkerConfig {
 impl Default for WorkerConfig {
     fn default() -> Self {
         Self {
-            order_concurrency: 2,  // Default: 2 concurrent workers
-            email_concurrency: 2,  // Default: 2 concurrent workers
+            order_concurrency: 2,
+            email_concurrency: 2,
         }
     }
 }
@@ -43,19 +43,11 @@ pub async fn run_jobs_with_config(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut monitor = Monitor::new();
 
-    // Generate unique worker ID based on timestamp
-    let worker_id = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_secs();
-
-    println!("Worker ID: {}", worker_id);
     println!("Worker Concurrency:");
     println!("  - Order: {} instances", config.order_concurrency);
     println!("  - Email: {} instances", config.email_concurrency);
     println!();
 
-    // Register ORDER workers
-    println!("Registering order worker...");
     let order_storage = storage_factory.create_order_storage();
     let order_backoff = ExponentialBackoffMaker::new(
         Duration::from_secs(2),
@@ -65,25 +57,16 @@ pub async fn run_jobs_with_config(
     )?
     .make_backoff();
 
-    monitor = monitor.register({
-        let order_service = container.order_service.clone();
-        let worker_id = worker_id.clone();
-        let concurrency = config.order_concurrency;
-
-        move |count| {
-            if count < concurrency {
-                println!("  → Starting order worker instance {}/{}", count + 1, concurrency);
-            }
-            WorkerBuilder::new(format!("order-worker-{}-{}", worker_id, count))
-                .backend(order_storage.clone())
-                .data(order_service.clone())
-                .retry(RetryPolicy::retries(3).with_backoff(order_backoff.clone()))
-                .build(order_handler_fn)
-        }
+    println!("Registering order worker...");
+    monitor = monitor.register(move |_| {
+        WorkerBuilder::new("order-worker")
+            .backend(order_storage.clone())
+            .concurrency(config.order_concurrency)
+            .data(container.order_service.clone())
+            .retry(RetryPolicy::retries(3).with_backoff(order_backoff.clone()))
+            .build(order_handler_fn)
     });
 
-    // Register EMAIL workers
-    println!("Registering email worker...");
     let email_storage = storage_factory.create_email_storage();
     let email_backoff = ExponentialBackoffMaker::new(
         Duration::from_secs(2),
@@ -93,21 +76,14 @@ pub async fn run_jobs_with_config(
     )?
     .make_backoff();
 
-    monitor = monitor.register({
-        let email_service = container.email_service.clone();
-        let worker_id = worker_id.clone();
-        let concurrency = config.email_concurrency;
-
-        move |count| {
-            if count < concurrency {
-                println!("  → Starting email worker instance {}/{}", count + 1, concurrency);
-            }
-            WorkerBuilder::new(format!("email-worker-{}-{}", worker_id, count))
-                .backend(email_storage.clone())
-                .data(email_service.clone())
-                .retry(RetryPolicy::retries(3).with_backoff(email_backoff.clone()))
-                .build(email_handler_fn)
-        }
+    println!("Registering email worker...");
+    monitor = monitor.register(move |_| {
+        WorkerBuilder::new("email-worker")
+            .backend(email_storage.clone())
+            .concurrency(config.email_concurrency)
+            .data(container.email_service.clone())
+            .retry(RetryPolicy::retries(3).with_backoff(email_backoff.clone()))
+            .build(email_handler_fn)
     });
 
     println!();

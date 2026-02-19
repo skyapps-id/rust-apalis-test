@@ -3,6 +3,6 @@
 //! This module provides storage implementations and factory functions
 //! for creating job queue storages.
 
-pub mod redis;
+pub mod amqp;
 
-pub use redis::StorageFactory;
+pub use amqp::StorageFactory;

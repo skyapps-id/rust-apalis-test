@@ -1,4 +1,4 @@
-use crate::storage::redis::StorageFactory;
+use crate::storage::amqp::StorageFactory;
 use crate::usecase::{EmailSender, EmailService, OrderService, OrderUsecase};
 use std::sync::Arc;
 

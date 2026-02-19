@@ -1,6 +1,5 @@
-use redis::{Client, aio::ConnectionManager};
 use rust_apalis_test::server::rest::{run_server, ServerState};
-use rust_apalis_test::storage::redis::StorageFactory;
+use rust_apalis_test::storage::amqp::StorageFactory;
 use rust_apalis_test::AppContainer;
 use std::sync::Arc;
 
@@ -10,10 +9,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Press Ctrl+C to shutdown gracefully...");
     println!();
 
-    let redis_client = Client::open("redis://127.0.0.1:6379")?;
-    let conn = ConnectionManager::new(redis_client).await?;
-
-    let storage_factory = Arc::new(StorageFactory::new(conn));
+    let amqp_addr = std::env::var("AMQP_ADDR").unwrap_or_else(|_| "amqp://admin:password@127.0.0.1:5672".to_string());
+    let conn_name = std::env::var("AMQP_CONN_NAME").unwrap_or_else(|_| "rust-apalis-rest".to_string());
+    let storage_factory = Arc::new(StorageFactory::with_connection_name(&amqp_addr, &conn_name).await?);
     let container = AppContainer::new(storage_factory);
     let state = ServerState::new(container);
 

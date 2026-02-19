@@ -1,5 +1,5 @@
 use crate::domain::jobs::{EmailJob, OrderJob};
-use crate::storage::redis::StorageFactory;
+use crate::storage::amqp::StorageFactory;
 use apalis::prelude::*;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -32,15 +32,13 @@ impl OrderService {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut email_storage = self.storage.create_email_storage();
 
-        let email_task = Task::builder(EmailJob {
+        let email_job = EmailJob {
             to: "customer@example.com".to_string(),
             subject: format!("Order Processed: {}", event_id),
             body: format!("Your order {} has been processed successfully.", event_id),
-        })
-        .run_in_seconds(5)
-        .build();
+        };
 
-        email_storage.push_task(email_task).await?;
+        email_storage.push(email_job).await?;
 
         println!("Email notification scheduled for order: {}", event_id);
         Ok(())
@@ -53,14 +51,12 @@ impl OrderService {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut storage = self.storage.create_order_storage();
 
-        let task = Task::builder(OrderJob {
+        let job = OrderJob {
             event_id: event_id.clone(),
             device_uuid,
-        })
-        .run_in_seconds(5)
-        .build();
+        };
 
-        storage.push_task(task).await?;
+        storage.push(job).await?;
 
         println!("Order task scheduled for event: {}", event_id);
         Ok(())
