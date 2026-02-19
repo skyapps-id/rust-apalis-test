@@ -2,6 +2,8 @@ use rust_apalis_test::server::worker::register::{run_jobs_with_config, WorkerCon
 use rust_apalis_test::storage::postgres::StorageFactory;
 use rust_apalis_test::AppContainer;
 use std::sync::Arc;
+use apalis_board::axum::sse::{TracingBroadcaster, TracingSubscriber};
+use tracing_subscriber::{EnvFilter, Layer as TraceLayer, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -9,11 +11,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Press Ctrl+C to shutdown gracefully...");
     println!();
 
-    let database_url = "postgres://root:root@localhost:5432/apalis-postgres";
+    let database_url = "postgres://root:root@localhost:5432/apalis-database";
     let pool = sqlx::PgPool::connect(database_url).await?;
 
     // Setup PostgreSQL tables for apalis
     apalis_postgres::PostgresStorage::setup(&pool).await?;
+
+    // Setup tracing broadcaster untuk apalis board
+    let broadcaster = TracingBroadcaster::create();
+    let line_sub = TracingSubscriber::new(&broadcaster);
+    let tracer = tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_filter(EnvFilter::builder().parse("info").unwrap()),
+        )
+        .with(
+            line_sub
+                .layer()
+                .with_filter(EnvFilter::builder().parse("apalis=debug,info").unwrap()),
+        );
+    tracer.try_init()?;
 
     let storage_factory = Arc::new(StorageFactory::new(pool));
     let container = AppContainer::new(storage_factory.clone());

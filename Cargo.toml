@@ -23,8 +23,12 @@ path = "bins/setup_migration/main.rs"
 name = "board"
 path = "bins/board/main.rs"
 
+[[bin]]
+name = "combined"
+path = "bins/combined/main.rs"
+
 [dependencies]
-apalis = { version = "1.0.0-rc.4", features = ["retry"] }
+apalis = { version = "1.0.0-rc.4", features = ["retry", "tracing"] }
 apalis-postgres = { version = "1.0.0-rc.3" }
 apalis-core = { version = "1.0.0-rc.4" }
 tokio = { version = "1", features = ["full"] }
