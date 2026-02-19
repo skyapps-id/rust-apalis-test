@@ -2,9 +2,13 @@
 //!
 //! Provides a simple function to register and run jobs
 
-use apalis::prelude::{Monitor, WorkerBuilder};
+use apalis::layers::retry::RetryPolicy;
+use apalis::prelude::{Monitor, ParallelizeExt, WorkerBuilder};
 use apalis::layers::WorkerBuilderExt;
 use std::sync::Arc;
+use std::time::Duration;
+use tower::retry::backoff::{ExponentialBackoffMaker, MakeBackoff};
+use tower::util::rng::HasherRng;
 
 use crate::storage::postgres::StorageFactory;
 use crate::handler::workflow::{email::email_handler_fn, order::order_handler_fn};
@@ -50,7 +54,22 @@ pub async fn run_jobs_with_config(
     println!();
 
     let order_storage = storage_factory.create_order_storage();
+    let order_backoff = ExponentialBackoffMaker::new(
+        Duration::from_secs(2),
+        Duration::from_secs(10),
+        0.5,
+        HasherRng::new(),
+    )?
+    .make_backoff();
+
     let email_storage = storage_factory.create_email_storage();
+    let email_backoff = ExponentialBackoffMaker::new(
+        Duration::from_secs(2),
+        Duration::from_secs(10),
+        0.5,
+        HasherRng::new(),
+    )?
+    .make_backoff();
 
     println!();
     println!("Starting monitor...");
@@ -66,6 +85,8 @@ pub async fn run_jobs_with_config(
                     .backend(order_storage.clone())
                     .data(container.order_service.clone())
                     .concurrency(config.order_concurrency)
+                    .retry(RetryPolicy::retries(3).with_backoff(order_backoff.clone()))
+                    .parallelize(tokio::task::spawn)
                     .build(order_handler_fn)
             }
         })
@@ -77,6 +98,8 @@ pub async fn run_jobs_with_config(
                     .backend(email_storage.clone())
                     .data(container.email_service.clone())
                     .concurrency(config.email_concurrency)
+                    .retry(RetryPolicy::retries(3).with_backoff(email_backoff.clone()))
+                    .parallelize(tokio::task::spawn)
                     .build(email_handler_fn)
             }
         })
