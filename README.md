@@ -8,31 +8,39 @@ A production-ready example project using **Apalis 1.0.0-rc.4** for background jo
 - ✅ **REST API** - Create/schedule jobs via HTTP endpoints (Axum)
 - ✅ **Worker Processing** - Configurable concurrency, async job consumers
 - ✅ **Dependency Injection** - Centralized AppContainer
-- ✅ **Redis Storage** - Shared storage instances for producer & consumer
+- ✅ **PostgreSQL Storage** - Persistent storage with apalis-postgres
 - ✅ **Graceful Shutdown** - Ctrl+C handler for clean exit
 - ✅ **Unique Worker ID** - Timestamp-based worker identification
 - ✅ **Type Safety** - Trait objects for flexibility
+- ✅ **Apalis Board** - Web UI for monitoring jobs (optional)
 
 ## Prerequisites
 
 - Rust 2024 edition
-- Redis server (required)
+- PostgreSQL server (required)
 
 ```bash
-# Install Redis
-brew install redis  # macOS
-sudo apt install redis-server  # Ubuntu
+# Install PostgreSQL
+brew install postgresql@16  # macOS
+sudo apt install postgresql  # Ubuntu
 
-# Start Redis
-redis-server
+# Start PostgreSQL
+brew services start postgresql@16  # macOS
+sudo systemctl start postgresql  # Linux
 ```
+
+See [DATABASE_SETUP.md](DATABASE_SETUP.md) for detailed database setup.
 
 ## Quick Start
 
-### 1. Start Redis
+### 1. Setup Database
 
 ```bash
-redis-server
+# Create database
+psql -U postgres -c "CREATE DATABASE apalis_database OWNER root;"
+
+# Run migrations
+cargo run --bin setup_migration
 ```
 
 ### 2. Start Worker (Terminal 1)
@@ -79,7 +87,7 @@ GET  /health - Health check
 
 **Graceful Shutdown:** Both worker and REST API support Ctrl+C for clean shutdown.
 
-### 4. Send Job via REST API
+### 3. Send Job via REST API
 
 ```bash
 curl -X POST http://localhost:3000/orders \
@@ -98,7 +106,7 @@ Response:
 }
 ```
 
-### 5. Worker Processes Job
+### 4. Worker Processes Job
 
 Worker terminal output:
 ```
@@ -164,14 +172,19 @@ rust-apalis-test/
 │   │   │   └── mod.rs
 │   │   └── mod.rs
 │   ├── storage/          # Storage abstraction
-│   │   ├── redis.rs      # StorageFactory (shared instances)
+│   │   ├── postgres.rs   # StorageFactory for PostgreSQL
 │   │   └── mod.rs
 │   ├── container.rs      # AppContainer (DI container)
 │   └── lib.rs            # Public API exports
 ├── bins/                 # Binary executables
 │   ├── rest/main.rs      # REST API server binary
-│   └── worker/main.rs    # Worker binary
+│   ├── worker/main.rs    # Worker binary
+│   ├── board/main.rs     # Apalis Board UI binary
+│   └── setup_migration/  # Database migration binary
+├── docs/
+│   └── APALIS_BOARD.md   # Apalis Board setup guide
 ├── Cargo.toml
+├── DATABASE_SETUP.md     # Database setup guide
 ├── ARCHITECTURE.md       # Detailed architecture guide
 └── README.md
 ```
@@ -184,14 +197,14 @@ This project follows **Clean Architecture** principles with clear separation of 
 - **Usecase Layer** - Business logic traits & implementations with private helper methods
 - **Handler Layer** - HTTP request handlers & job handlers
 - **Server Layer** - Worker registration & REST server setup
-- **Storage Layer** - Redis storage abstraction
+- **Storage Layer** - PostgreSQL storage abstraction
 - **Container** - Dependency injection
 
 ### Private Helper Methods Pattern
 
 Services in the usecase layer use private helper methods for task scheduling:
 
-- `OrderService::schedule_order_task()` - Schedules order jobs to Redis queue
+- `OrderService::schedule_order_task()` - Schedules order jobs to PostgreSQL queue
 - `OrderService::send_order_email()` - Schedules email notifications
 
 This pattern keeps trait methods clean and delegates task creation/storage logic to private methods.
@@ -257,16 +270,27 @@ rust-apalis-test/
 
 For detailed architecture information, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Apalis Board (Web UI)
+
+Monitor and manage jobs via web interface:
+
+```bash
+cargo run --bin board
+```
+
+Access at: http://localhost:9000
+
+See [docs/APALIS_BOARD.md](docs/APALIS_BOARD.md) for details.
+
 ## Troubleshooting
 
 ### Worker not consuming tasks
 
-**Problem:** Tasks are pushed to Redis but worker doesn't process them.
+**Problem:** Tasks are pushed to PostgreSQL but worker doesn't process them.
 
-**Solution:** Check task status in Redis:
+**Solution:** Check task status in database:
 ```bash
-redis-cli KEYS "*order*"
-redis-cli HGETALL "rust_apalis_test::domain::jobs::OrderJob:meta:<TASK_ID>"
+psql -h localhost -U root -d apalis-database -c "SELECT id, status, queue FROM tasks ORDER BY created_at DESC LIMIT 5;"
 ```
 
 If status is `Failed`, check handler signature matches trait object type:
@@ -282,40 +306,40 @@ ctx: Data<std::sync::Arc<OrderService>>
 
 **Problem:** Producer and consumer use different storage instances.
 
-**Solution:** Ensure `StorageFactory` creates shared instances:
+**Solution:** Ensure `StorageFactory` uses the same PgPool:
 ```rust
 // In StorageFactory::new()
-let order_storage = Arc::new(RedisStorage::new(conn.clone()));
+pub fn new(pool: PgPool) -> Self {
+    Self { pool }
+}
 
-// In create_order_storage()
-pub fn create_order_storage(&self) -> RedisStorage<OrderJob> {
-    (*self.order_storage).clone()  // Return clone of shared instance
+// All storage methods use the same pool
+pub fn create_order_storage(&self) -> PostgresStorage<OrderJob> {
+    PostgresStorage::new(self.pool.clone())
 }
 ```
 
 ### Worker restart error: "worker is still active"
 
-**Problem:** Redis still has worker metadata from previous run.
+**Problem:** Database still has worker metadata from previous run.
 
-**Solution:** Two options:
-
-1. **Flush Redis (quick fix):**
+**Solution:** Clean up worker metadata:
 ```bash
-redis-cli FLUSHALL
+psql -h localhost -U root -d apalis-database -c "DELETE FROM workers WHERE last_seen < NOW() - INTERVAL '5 minutes';"
 ```
 
-2. **Wait for worker timeout (default 60 seconds)** - Worker metadata will expire automatically.
-
-**Note:** This project uses unique worker IDs (timestamp-based), so restart usually works without flushing.
+**Note:** This project uses unique worker IDs (timestamp-based), so restart usually works without cleanup.
 
 ## Dependencies
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
 | `apalis` | 1.0.0-rc.4 | Job processing framework |
-| `apalis-redis` | 1.0.0-rc.3 | Redis storage backend |
+| `apalis-postgres` | 1.0.0-rc.3 | PostgreSQL storage backend |
+| `apalis-board` | 1.0.0-rc.3 | Web UI for monitoring |
+| `apalis-board-api` | 1.0.0-rc.3 | API for Apalis Board |
 | `axum` | 0.8 | HTTP server framework |
-| `redis` | 0.32 | Redis client |
+| `sqlx` | 0.8 | Database client |
 | `tokio` | 1 | Async runtime |
 | `serde` | 1 | Serialization |
 | `async-trait` | 0.1 | Async trait support |
@@ -324,12 +348,13 @@ redis-cli FLUSHALL
 
 1. **Trait-based Architecture** - Flexible business logic via traits
 2. **Dependency Injection** - Centralized AppContainer
-3. **Shared Storage** - Single RedisStorage instance per job type
+3. **Persistent Storage** - PostgreSQL with connection pooling
 4. **Type Safety** - Trait objects ensure compile-time checks
 5. **Testability** - Each layer can be tested independently
 6. **Scalability** - Easy to add new job types
 7. **Graceful Shutdown** - Clean exit on Ctrl+C
 8. **Worker Concurrency** - Configurable parallel processing
+9. **Web Monitoring** - Apalis Board for job visualization
 
 ## Contributing
 

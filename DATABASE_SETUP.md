@@ -4,7 +4,7 @@
 
 **Semua file menggunakan connection string yang sama:**
 ```
-postgres://root:root@localhost:5432/apalis-postgres
+postgres://root:root@localhost:5432/apalis-database
 ```
 
 **Format:** `postgres://[USER]:[PASSWORD]@[HOST]:[PORT]/[DATABASE]`
@@ -15,7 +15,7 @@ postgres://root:root@localhost:5432/apalis-postgres
 | Password | `root` |
 | Host | `localhost` |
 | Port | `5432` |
-| Database | `apalis-postgres` |
+| Database | `apalis-database` |
 
 ---
 
@@ -48,12 +48,12 @@ CREATE ROLE root WITH LOGIN PASSWORD 'root';
 
 **3. Buat database:**
 ```sql
-CREATE DATABASE apalis_postgres OWNER root;
+CREATE DATABASE apalis_database OWNER root;
 ```
 
 **4. Grant privileges:**
 ```sql
-GRANT ALL PRIVILEGES ON DATABASE apalis_postgres TO root;
+GRANT ALL PRIVILEGES ON DATABASE apalis_database TO root;
 ```
 
 **5. Keluar:**
@@ -66,20 +66,20 @@ GRANT ALL PRIVILEGES ON DATABASE apalis_postgres TO root;
 **Jalankan PostgreSQL di Docker:**
 
 ```bash
-docker run --name apalis-postgres \
+docker run --name apalis-database \
   -e POSTGRES_USER=root \
   -e POSTGRES_PASSWORD=root \
-  -e POSTGRES_DB=apalis-postgres \
+  -e POSTGRES_DB=apalis-database \
   -p 5432:5432 \
   -d postgres:16-alpine
 ```
 
 **Verifikasi:**
 ```bash
-docker ps | grep apalis-postgres
+docker ps | grep apalis-database
 
 # Test connection
-docker exec -it apalis-postgres psql -U root -d apalis-postgres
+docker exec -it apalis-database psql -U root -d apalis-database
 ```
 
 ---
@@ -96,7 +96,7 @@ Output yang diharapkan:
 ```
 🔄 Setting up Apalis PostgreSQL migrations...
 
-📡 Connecting to: postgres://root:root@localhost:5432/apalis-postgres
+📡 Connecting to: postgres://root:root@localhost:5432/apalis-database
 ✅ Connected!
 
 🚀 Running migrations...
@@ -116,7 +116,7 @@ Output yang diharapkan:
 
 **Test connection via psql:**
 ```bash
-psql -h localhost -U root -d apalis-postgres
+psql -h localhost -U root -d apalis-database
 ```
 
 **Cek tabel:**
@@ -144,7 +144,7 @@ SELECT COUNT(*) FROM tasks;
 ./setup-db.sh
 
 # Atau manual
-psql -U postgres -c "CREATE DATABASE apalis_postgres OWNER root;"
+psql -U postgres -c "CREATE DATABASE apalis_database OWNER root;"
 ```
 
 ### Error: "authentication failed"
@@ -176,7 +176,7 @@ psql -U postgres -c "ALTER ROLE root WITH PASSWORD 'root';"
 
 ```bash
 psql -U postgres -c "CREATE ROLE root WITH LOGIN PASSWORD 'root';"
-psql -U postgres -c "CREATE DATABASE apalis_postgres OWNER root;"
+psql -U postgres -c "CREATE DATABASE apalis_database OWNER root;"
 ```
 
 ---
@@ -203,7 +203,7 @@ Kedua binary akan otomatis menjalankan migration saat startup.
 
 **Connect ke database:**
 ```bash
-psql -h localhost -U root -d apalis-postgres
+psql -h localhost -U root -d apalis-database
 ```
 
 **Query penting:**
@@ -238,11 +238,8 @@ WHERE id = 'task-id-here';
 
 ```bash
 # Drop dan recreate
-psql -U postgres -c "DROP DATABASE IF EXISTS apalis_postgres;"
-psql -U postgres -c "CREATE DATABASE apalis_postgres OWNER root;"
-
-# Jalankan ulang migration
-cargo run --bin setup_migration
+psql -U postgres -c "DROP DATABASE IF EXISTS apalis_database;"
+psql -U postgres -c "CREATE DATABASE apalis_database OWNER root;"
 ```
 
 ---

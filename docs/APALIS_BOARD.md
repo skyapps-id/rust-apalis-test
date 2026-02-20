@@ -1,32 +1,39 @@
 # Setup Apalis Board
 
-Apalis Board adalah web UI untuk monitoring dan managing jobs. Berikut cara setup-nya:
+Apalis Board adalah web UI untuk monitoring dan managing jobs. 
+
+> **Note:** Saat ini apalis-board hanya tersedia untuk PostgreSQL storage.
 
 ## 1. Tambah Dependency
 
 Sudah ditambahkan di `Cargo.toml`:
 ```toml
 apalis-board = { version = "1.0.0-rc.3", features = ["axum"] }
+apalis-board-api = "1.0.0-rc.3"
 ```
 
 ## 2. Integrasi dengan Axum
 
 Ada dua cara mengintegrasikan apalis-board:
 
-### Cara 1: API Only (Recommended untuk sekarang)
+### Cara 1: Terintegrasi dengan REST API (Recommended)
 
-Setup API endpoints untuk board, tanpa UI:
+Tambahkan board API ke router REST yang sudah ada:
 
 ```rust
 // src/server/rest/router.rs
-use apalis_board::axum::framework::{ApiBuilder, RegisterRoute};
+use apalis_board_api::framework::{ApiBuilder, RegisterRoute};
+use rust_apalis_test::storage::postgres::StorageFactory;
 
 pub fn create_router(state: ServerState) -> Router {
     // Setup Apalis Board API
-    let board_api = ApiBuilder::new(axum::routing::Router::new()) // Base router kosong
-        .mount("/api/v1") // Mount di path ini
-        .register(state.container.storage.create_order_storage())
-        .register(state.container.storage.create_email_storage())
+    let storage_factory = StorageFactory::new(state.pool.clone());
+    
+    let board_api = ApiBuilder::new(Router::new())
+        .mount("/api/v1")
+        .register(storage_factory.create_order_storage())
+        .register(storage_factory.create_email_storage())
+        .register(storage_factory.create_alert_storage())
         .build();
 
     Router::new()
@@ -45,7 +52,7 @@ Jalankan apalis-board di port terpisah:
 // bins/board/main.rs (baru)
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let pool = sqlx::PgPool::connect("postgres://root:root@localhost:5432/apalis-postgres").await?;
+    let pool = sqlx::PgPool::connect("postgres://root:root@localhost:5432/apalis-database").await?;
     let storage_factory = Arc::new(StorageFactory::new(pool));
 
     use apalis_board::axum::framework::{ApiBuilder, RegisterRoute};
