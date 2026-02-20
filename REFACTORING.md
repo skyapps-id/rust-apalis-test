@@ -1,5 +1,81 @@
 # Project Refactoring Summary
 
+## Storage Migration: Redis → RabbitMQ (Feb 2025)
+
+### Changes
+
+**Before (Redis Storage):**
+- Used `apalis-redis` with `RedisStorage`
+- Direct Redis connection via `redis` crate
+- Connection manager for Redis
+
+**After (RabbitMQ Storage):**
+- Uses `apalis-amqp` with `AmqpBackend`
+- AMQP connection via `lapin` crate
+- Connection pooling via `deadpool-lapin`
+
+### Migration Details
+
+1. **Storage Implementation**
+   - Removed: `src/storage/redis.rs`
+   - Added: `src/storage/amqp.rs`
+   
+2. **Key Changes in `src/storage/amqp.rs`:**
+   ```rust
+   // Before: Redis
+   pub struct StorageFactory {
+       conn: ConnectionManager,
+       order_storage: Arc<RedisStorage<OrderJob>>,
+   }
+   
+   // After: AMQP
+   pub struct StorageFactory {
+       order_storage: Arc<AmqpStorage<OrderJob>>,
+       email_storage: Arc<AmqpStorage<EmailJob>>,
+       alert_storage: Arc<AmqpStorage<AlertJob>>,
+   }
+   
+   impl StorageFactory {
+       pub async fn with_connection_name(
+           amqp_addr: &str,
+           connection_name: &str,
+       ) -> Result<Self, Box<dyn std::error::Error>> {
+           let pool = Pool::builder(Manager::new(amqp_addr, conn_props))
+               .max_size(10)
+               .build()?;
+           // ...
+       }
+   }
+   ```
+
+3. **Binary Changes**
+   - `bins/rest/main.rs`: Added AMQP_ADDR and AMQP_CONN_NAME env vars
+   - `bins/worker/main.rs`: Added AMQP_ADDR and AMQP_CONN_NAME env vars
+
+4. **Dependencies Updated**
+   - Removed: `apalis-redis`, `redis`
+   - Added: `apalis-amqp`, `lapin`, `deadpool-lapin`
+
+### Benefits of RabbitMQ Migration
+
+1. **Better Message Guarantees** - RabbitMQ provides stronger delivery guarantees
+2. **Connection Pooling** - Efficient connection management via deadpool
+3. **Protocol Standard** - AMQP is a standard messaging protocol
+4. **Better Monitoring** - RabbitMQ management UI for queue monitoring
+5. **Clustering Support** - Built-in support for high availability
+
+### Environment Variables
+
+```bash
+# AMQP connection URL (default: amqp://admin:password@127.0.0.1:5672)
+export AMQP_ADDR="amqp://admin:password@127.0.0.1:5672"
+
+# Connection name for tracking (default: rust-apalis-app/worker/rest)
+export AMQP_CONN_NAME="rust-apalis-rest"
+```
+
+---
+
 ## Before
 
 ```

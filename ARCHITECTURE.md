@@ -1,6 +1,6 @@
 # Clean Architecture Job Processing with Apalis
 
-This project demonstrates a **clean architecture pattern** for building job processing systems with Rust and Apalis, featuring REST API, trait-based usecases, dependency injection, and configurable worker concurrency.
+This project demonstrates a **clean architecture pattern** for building job processing systems with Rust and Apalis, featuring REST API, trait-based usecases, dependency injection, RabbitMQ storage, and configurable worker concurrency.
 
 ## Table of Contents
 
@@ -62,7 +62,7 @@ impl OrderService {
     // Private helper method for sending order emails
     async fn send_order_email(&self, event_id: String)
         -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Email scheduling logic...
+        // Email scheduling logic via RabbitMQ...
     }
 }
 
@@ -103,33 +103,36 @@ Contains worker registration and REST server setup.
   - `register.rs`: `run_jobs()`, Monitor setup, WorkerConfig
 
 ### 5. Storage Layer (`src/storage/`)
-Provides storage abstractions for job queues.
+Provides storage abstractions for job queues using RabbitMQ/AMQP.
 
-- **`redis.rs`**: `StorageFactory` with **shared storage instances**
+- **`amqp.rs`**: `StorageFactory` with **shared AMQP backends** and connection pooling
 
-#### Shared Storage Pattern
+#### AMQP Storage Pattern
 
 ```rust
 pub struct StorageFactory {
-    conn: ConnectionManager,
-    order_storage: Arc<RedisStorage<OrderJob>>,  // Shared!
-    email_storage: Arc<RedisStorage<EmailJob>>,  // Shared!
-    // ...
+    order_storage: Arc<AmqpStorage<OrderJob>>,  // Shared!
+    email_storage: Arc<AmqpStorage<EmailJob>>,  // Shared!
+    alert_storage: Arc<AmqpStorage<AlertJob>>,  // Shared!
 }
 
 impl StorageFactory {
-    pub fn new(conn: ConnectionManager) -> Self {
-        let order_storage = Arc::new(RedisStorage::new(conn.clone()));
+    pub async fn new(amqp_addr: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let pool = Pool::builder(Manager::new(amqp_addr, conn_props))
+            .max_size(10)
+            .build()?;
+        
+        let order_storage = Arc::new(create_backend(pool.clone(), "order-jobs").await?);
         // ...
     }
 
-    pub fn create_order_storage(&self) -> RedisStorage<OrderJob> {
-        (*self.order_storage).clone()  // Clone Arc, not new storage
+    pub fn create_order_storage(&self) -> AmqpStorage<OrderJob> {
+        (*self.order_storage).clone()  // Clone Arc, not new backend
     }
 }
 ```
 
-**Why?** Producer and consumer must use the **same storage instance** to share the same Redis queue.
+**Why?** Producer and consumer must use the **same storage instance** to share the same RabbitMQ queue. Connection pooling via `deadpool-lapin` manages connections efficiently.
 
 ### 6. Container (`container.rs`)
 Dependency injection container that provides all dependencies.
@@ -187,7 +190,7 @@ rust-apalis-test/
 │   │   │   └── mod.rs
 │   │   └── mod.rs
 │   └── storage/               # Storage abstraction
-│       ├── redis.rs          # StorageFactory (shared instances)
+│       ├── amqp.rs           # StorageFactory (AMQP backends)
 │       └── mod.rs
 ├── bins/                      # Binary executables
 │   ├── rest/main.rs          # REST API server
@@ -206,16 +209,16 @@ sequenceDiagram
     participant Client
     participant REST_Handler
     participant OrderUsecase
-    participant Redis_Storage
+    participant RabbitMQ
     participant Worker
 
     Client->>REST_Handler: POST /orders
     REST_Handler->>OrderUsecase: create_order()
-    OrderUsecase->>Redis_Storage: push_task()
-    Note over Redis_Storage: Job queued
+    OrderUsecase->>RabbitMQ: push_task()
+    Note over RabbitMQ: Job queued
     OrderUsecase-->>REST_Handler: Ok(event_id)
     REST_Handler-->>Client: 201 Created
-    Worker->>Redis_Storage: poll task
+    Worker->>RabbitMQ: consume message
     Worker->>OrderUsecase: process_order()
     OrderUsecase-->>Worker: Ok(())
 ```
@@ -255,7 +258,8 @@ pub order_service: Arc<dyn OrderUsecase>
 All dependencies are provided via `AppContainer`:
 
 ```rust
-let container = AppContainer::new(storage);
+let storage_factory = Arc::new(StorageFactory::new("amqp://127.0.0.1:5672").await?);
+let container = AppContainer::new(storage_factory);
 let state = ServerState::new(container);
 ```
 
@@ -263,21 +267,22 @@ This makes testing easy - just create a test container with mock implementations
 
 ### 3. Shared Storage Instances
 
-**Critical:** Producer and consumer must use the same `RedisStorage` instance:
+**Critical:** Producer and consumer must use the same `AmqpStorage` instance:
 
 ```rust
 // ✅ CORRECT - Shared Arc
 pub struct StorageFactory {
-    order_storage: Arc<RedisStorage<OrderJob>>,
+    order_storage: Arc<AmqpStorage<OrderJob>>,
 }
 
-pub fn create_order_storage(&self) -> RedisStorage<OrderJob> {
+pub fn create_order_storage(&self) -> AmqpStorage<OrderJob> {
     (*self.order_storage).clone()  // Clone Arc
 }
 
 // ❌ WRONG - New instance each time
-pub fn create_order_storage(&self) -> RedisStorage<OrderJob> {
-    RedisStorage::new(self.conn.clone())  // Different queue!
+pub fn create_order_storage(&self) -> AmqpStorage<OrderJob> {
+    let new_conn = pool.get().await?;
+    AmqpBackend::new(new_conn.create_channel().await?, queue)  // Different queue!
 }
 ```
 
@@ -513,30 +518,32 @@ Add to `src/storage/redis.rs`:
 use crate::domain::jobs::NotificationJob;
 
 pub struct StorageFactory {
-    conn: ConnectionManager,
-    order_storage: Arc<RedisStorage<OrderJob>>,
-    email_storage: Arc<RedisStorage<EmailJob>>,
-    notification_storage: Arc<RedisStorage<NotificationJob>>,  // NEW
-    alert_storage: Arc<RedisStorage<AlertJob>>,
+    order_storage: Arc<AmqpStorage<OrderJob>>,
+    email_storage: Arc<AmqpStorage<EmailJob>>,
+    notification_storage: Arc<AmqpStorage<NotificationJob>>,  // NEW
+    alert_storage: Arc<AmqpStorage<AlertJob>>,
 }
 
 impl StorageFactory {
-    pub fn new(conn: ConnectionManager) -> Self {
-        let order_storage = Arc::new(RedisStorage::new(conn.clone()));
-        let email_storage = Arc::new(RedisStorage::new(conn.clone()));
-        let notification_storage = Arc::new(RedisStorage::new(conn.clone()));  // NEW
-        let alert_storage = Arc::new(RedisStorage::new(conn));
+    pub async fn new(amqp_addr: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let pool = Pool::builder(Manager::new(amqp_addr, conn_props))
+            .max_size(10)
+            .build()?;
+        
+        let order_storage = Arc::new(create_backend(pool.clone(), "order-jobs").await?);
+        let email_storage = Arc::new(create_backend(pool.clone(), "email-jobs").await?);
+        let notification_storage = Arc::new(create_backend(pool.clone(), "notification-jobs").await?);  // NEW
+        let alert_storage = Arc::new(create_backend(pool.clone(), "alert-jobs").await?);
 
-        Self {
-            conn,
+        Ok(Self {
             order_storage,
             email_storage,
             notification_storage,
             alert_storage,
-        }
+        })
     }
 
-    pub fn create_notification_storage(&self) -> RedisStorage<NotificationJob> {
+    pub fn create_notification_storage(&self) -> AmqpStorage<NotificationJob> {
         (*self.notification_storage).clone()
     }
 }
@@ -676,10 +683,12 @@ pub fn create_router(state: ServerState) -> Router {
 
 ## Running the Project
 
-### Start Redis
+### Start RabbitMQ
 
 ```bash
-redis-server
+rabbitmq-server
+# OR with brew services
+brew services start rabbitmq
 ```
 
 ### Start the Worker
@@ -708,7 +717,7 @@ curl -X POST http://localhost:3000/orders \
 2. **Trait-based** - Flexible business logic via traits
 3. **Dependency Injection** - Easy testing with mocks
 4. **Type Safety** - Trait objects ensure compile-time checks
-5. **Shared Storage** - Single RedisStorage instance per job type
+5. **Shared Storage** - Single AmqpBackend instance per job type with connection pooling
 6. **Easy to Extend** - Adding new jobs requires touching specific files only
 7. **Testability** - Each layer can be tested independently
 8. **Worker Concurrency** - Configurable parallel processing per job type
@@ -719,11 +728,12 @@ curl -X POST http://localhost:3000/orders \
 
 ### Issue: Worker not consuming tasks
 
-**Symptom:** Tasks in Redis but worker doesn't process them.
+**Symptom:** Tasks in RabbitMQ but worker doesn't process them.
 
-**Check task status:**
+**Check queue status:**
 ```bash
-redis-cli HGETALL "rust_apalis_test::domain::jobs::OrderJob:meta:<TASK_ID>"
+rabbitmqctl list_queues
+rabbitmqctl list_queues name messages
 ```
 
 **Solution:** Ensure handler uses trait object:
@@ -741,15 +751,15 @@ ctx: Data<std::sync::Arc<OrderService>>
 
 **Solution:** Ensure `StorageFactory` returns **shared Arc instances**, not new storage each time.
 
-See [Shared Storage Pattern](#3-shared-storage-instances) above.
+See [AMQP Storage Pattern](#5-storage-layer-srcstorage) above.
 
 ### Issue: Worker restart fails with "worker is still active"
 
 **Symptom:** Worker fails to start after crash/force-quit.
 
 **Solution:**
-- Wait 60 seconds for Redis timeout, OR
-- Flush Redis: `redis-cli FLUSHALL`
+- Wait for connection timeout, OR
+- Reset RabbitMQ: `rabbitmqctl reset`
 
 **Prevention:** Use graceful shutdown (Ctrl+C) instead of force-quit.
 

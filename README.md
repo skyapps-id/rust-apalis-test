@@ -8,7 +8,7 @@ A production-ready example project using **Apalis 1.0.0-rc.4** for background jo
 - ✅ **REST API** - Create/schedule jobs via HTTP endpoints (Axum)
 - ✅ **Worker Processing** - Configurable concurrency, async job consumers
 - ✅ **Dependency Injection** - Centralized AppContainer
-- ✅ **Redis Storage** - Shared storage instances for producer & consumer
+- ✅ **RabbitMQ Storage** - Shared AMQP backends with connection pooling
 - ✅ **Graceful Shutdown** - Ctrl+C handler for clean exit
 - ✅ **Unique Worker ID** - Timestamp-based worker identification
 - ✅ **Type Safety** - Trait objects for flexibility
@@ -16,23 +16,27 @@ A production-ready example project using **Apalis 1.0.0-rc.4** for background jo
 ## Prerequisites
 
 - Rust 2024 edition
-- Redis server (required)
+- RabbitMQ server (required)
 
 ```bash
-# Install Redis
-brew install redis  # macOS
-sudo apt install redis-server  # Ubuntu
+# Install RabbitMQ
+brew install rabbitmq  # macOS
+sudo apt install rabbitmq-server  # Ubuntu
 
-# Start Redis
-redis-server
+# Start RabbitMQ
+rabbitmq-server
+# OR with brew services
+brew services start rabbitmq
 ```
 
 ## Quick Start
 
-### 1. Start Redis
+### 1. Start RabbitMQ
 
 ```bash
-redis-server
+rabbitmq-server
+# OR with brew services
+brew services start rabbitmq
 ```
 
 ### 2. Start Worker (Terminal 1)
@@ -164,7 +168,7 @@ rust-apalis-test/
 │   │   │   └── mod.rs
 │   │   └── mod.rs
 │   ├── storage/          # Storage abstraction
-│   │   ├── redis.rs      # StorageFactory (shared instances)
+│   │   ├── amqp.rs       # StorageFactory (AMQP backends)
 │   │   └── mod.rs
 │   ├── container.rs      # AppContainer (DI container)
 │   └── lib.rs            # Public API exports
@@ -184,7 +188,7 @@ This project follows **Clean Architecture** principles with clear separation of 
 - **Usecase Layer** - Business logic traits & implementations with private helper methods
 - **Handler Layer** - HTTP request handlers & job handlers
 - **Server Layer** - Worker registration & REST server setup
-- **Storage Layer** - Redis storage abstraction
+- **Storage Layer** - RabbitMQ/AMQP storage abstraction
 - **Container** - Dependency injection
 
 ### Private Helper Methods Pattern
@@ -248,11 +252,11 @@ rust-apalis-test/
 │   ├── server/
 │   │   ├── rest/             ──▶  Router & Server
 │   │   └── worker/           ──▶  Worker Registration
-│   ├── storage/
-│   │   └── redis.rs          ──▶  StorageFactory (Shared Instances)
-│   └── container.rs          ──▶  Dependency Injection
-│
-└── Cargo.toml
+   │   ├── storage/
+   │   │   └── amqp.rs           ──▶  StorageFactory (AMQP Backends)
+   │   └── container.rs          ──▶  Dependency Injection
+   │
+   └── Cargo.toml
 ```
 
 For detailed architecture information, see [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -261,12 +265,12 @@ For detailed architecture information, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ### Worker not consuming tasks
 
-**Problem:** Tasks are pushed to Redis but worker doesn't process them.
+**Problem:** Tasks are pushed to RabbitMQ but worker doesn't process them.
 
-**Solution:** Check task status in Redis:
+**Solution:** Check queue status in RabbitMQ:
 ```bash
-redis-cli KEYS "*order*"
-redis-cli HGETALL "rust_apalis_test::domain::jobs::OrderJob:meta:<TASK_ID>"
+rabbitmqctl list_queues
+rabbitmqctl list_queues name messages
 ```
 
 If status is `Failed`, check handler signature matches trait object type:
@@ -285,26 +289,26 @@ ctx: Data<std::sync::Arc<OrderService>>
 **Solution:** Ensure `StorageFactory` creates shared instances:
 ```rust
 // In StorageFactory::new()
-let order_storage = Arc::new(RedisStorage::new(conn.clone()));
+let order_storage = Arc::new(AmqpBackend::new(channel, queue));
 
 // In create_order_storage()
-pub fn create_order_storage(&self) -> RedisStorage<OrderJob> {
+pub fn create_order_storage(&self) -> AmqpStorage<OrderJob> {
     (*self.order_storage).clone()  // Return clone of shared instance
 }
 ```
 
 ### Worker restart error: "worker is still active"
 
-**Problem:** Redis still has worker metadata from previous run.
+**Problem:** RabbitMQ still has connection/channel from previous run.
 
 **Solution:** Two options:
 
-1. **Flush Redis (quick fix):**
+1. **Reset RabbitMQ (quick fix):**
 ```bash
-redis-cli FLUSHALL
+rabbitmqctl reset
 ```
 
-2. **Wait for worker timeout (default 60 seconds)** - Worker metadata will expire automatically.
+2. **Wait for connection timeout** - Connections will close automatically.
 
 **Note:** This project uses unique worker IDs (timestamp-based), so restart usually works without flushing.
 
@@ -313,9 +317,10 @@ redis-cli FLUSHALL
 | Dependency | Version | Purpose |
 |------------|---------|---------|
 | `apalis` | 1.0.0-rc.4 | Job processing framework |
-| `apalis-redis` | 1.0.0-rc.3 | Redis storage backend |
+| `apalis-amqp` | 1.0.0-rc.3 | RabbitMQ/AMQP storage backend |
 | `axum` | 0.8 | HTTP server framework |
-| `redis` | 0.32 | Redis client |
+| `lapin` | 3.7 | AMQP client |
+| `deadpool-lapin` | 0.13 | Connection pooling for RabbitMQ |
 | `tokio` | 1 | Async runtime |
 | `serde` | 1 | Serialization |
 | `async-trait` | 0.1 | Async trait support |
@@ -324,7 +329,7 @@ redis-cli FLUSHALL
 
 1. **Trait-based Architecture** - Flexible business logic via traits
 2. **Dependency Injection** - Centralized AppContainer
-3. **Shared Storage** - Single RedisStorage instance per job type
+3. **Shared Storage** - Single AmqpBackend instance per job type with connection pooling
 4. **Type Safety** - Trait objects ensure compile-time checks
 5. **Testability** - Each layer can be tested independently
 6. **Scalability** - Easy to add new job types
