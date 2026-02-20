@@ -50,8 +50,8 @@ pub async fn run_jobs_with_config(
 
     println!("Worker ID: {}", worker_id);
     println!("Worker Concurrency:");
-    println!("  - Order: {} instances", config.order_concurrency);
-    println!("  - Email: {} instances", config.email_concurrency);
+    println!("  - Order: {}", config.order_concurrency);
+    println!("  - Email: {}", config.email_concurrency);
     println!();
 
     // Register ORDER workers
@@ -67,17 +67,14 @@ pub async fn run_jobs_with_config(
 
     monitor = monitor.register({
         let order_service = container.order_service.clone();
-        let worker_id = worker_id.clone();
-        let concurrency = config.order_concurrency;
+        let worker_id = worker_id;
 
-        move |count| {
-            if count < concurrency {
-                println!("  → Starting order worker instance {}/{}", count + 1, concurrency);
-            }
-            WorkerBuilder::new(format!("order-worker-{}-{}", worker_id, count))
+        move |_count| {
+            WorkerBuilder::new(format!("order-worker-{}", worker_id))
                 .backend(order_storage.clone())
                 .data(order_service.clone())
                 .retry(RetryPolicy::retries(3).with_backoff(order_backoff.clone()))
+                .concurrency(config.order_concurrency)
                 .build(order_handler_fn)
         }
     });
@@ -95,17 +92,14 @@ pub async fn run_jobs_with_config(
 
     monitor = monitor.register({
         let email_service = container.email_service.clone();
-        let worker_id = worker_id.clone();
-        let concurrency = config.email_concurrency;
+        let worker_id = worker_id;
 
-        move |count| {
-            if count < concurrency {
-                println!("  → Starting email worker instance {}/{}", count + 1, concurrency);
-            }
-            WorkerBuilder::new(format!("email-worker-{}-{}", worker_id, count))
+        move |_count| {
+            WorkerBuilder::new(format!("email-worker-{}", worker_id))
                 .backend(email_storage.clone())
                 .data(email_service.clone())
                 .retry(RetryPolicy::retries(3).with_backoff(email_backoff.clone()))
+                .concurrency(config.email_concurrency)
                 .build(email_handler_fn)
         }
     });
