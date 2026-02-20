@@ -57,7 +57,7 @@ impl OrderService {
             event_id: event_id.clone(),
             device_uuid,
         })
-        .run_in_seconds(5)
+        .run_in_seconds(1)
         .build();
 
         storage.push_task(task).await?;

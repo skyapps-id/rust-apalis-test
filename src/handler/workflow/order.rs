@@ -9,8 +9,15 @@ pub async fn order_handler_fn(
     ctx: Data<std::sync::Arc<dyn OrderUsecase>>,
     attempt: Attempt,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("[order_handler_fn] Attempt: {}", attempt.current());
+    let current_attempt = attempt.current();
+    println!("[order_handler_fn] Handler attempt: {}", current_attempt);
 
+    if current_attempt < 3 {
+        println!("❌ [ORDER] Simulating failure on attempt {}", current_attempt);
+        return Err("Simulated error for testing retry".into());
+    }
+
+    println!("✅ [ORDER] Processing on attempt {}", current_attempt);
     ctx.process_order(job).await?;
 
     Ok(())

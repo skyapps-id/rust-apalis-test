@@ -3,7 +3,7 @@
 //! Provides a simple function to register and run jobs
 
 use apalis::layers::retry::RetryPolicy;
-use apalis::prelude::{Monitor, WorkerBuilder};
+use apalis::prelude::{Monitor, ParallelizeExt, WorkerBuilder};
 use apalis::layers::WorkerBuilderExt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -75,6 +75,7 @@ pub async fn run_jobs_with_config(
                 .data(order_service.clone())
                 .retry(RetryPolicy::retries(3).with_backoff(order_backoff.clone()))
                 .concurrency(config.order_concurrency)
+                .parallelize(tokio::task::spawn)
                 .build(order_handler_fn)
         }
     });
@@ -100,6 +101,7 @@ pub async fn run_jobs_with_config(
                 .data(email_service.clone())
                 .retry(RetryPolicy::retries(3).with_backoff(email_backoff.clone()))
                 .concurrency(config.email_concurrency)
+                .parallelize(tokio::task::spawn)
                 .build(email_handler_fn)
         }
     });
